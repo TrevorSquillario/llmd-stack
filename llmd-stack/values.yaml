@@ -1,0 +1,214 @@
+# =============================================================================
+# Developer Copilot — Global Values
+# =============================================================================
+# This is the default values file. Override with values-sandbox.yaml or
+# values-production.yaml for environment-specific tuning.
+
+global:
+  # -- Cluster domain used for internal DNS resolution
+  clusterDomain: cluster.local
+  # -- Docker registry prefix for all images
+  registry: docker.io
+  # -- Image pull policy
+  imagePullPolicy: IfNotPresent
+  # -- Common labels applied to all resources
+  labels:
+    app.kubernetes.io/part-of: llmd-stack
+
+# =============================================================================
+# LiteLLM Proxy Settings
+# =============================================================================
+litellm:
+  enabled: true
+  image:
+    repository: docker.litellm.ai/berriai/litellm
+    tag: latest
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 4000
+  resources:
+    requests:
+      cpu: "1"
+      memory: "2Gi"
+    limits:
+      cpu: "4"
+      memory: "8Gi"
+  # -- Model aliases map: alias -> backend port
+  modelAliases:
+    code-fast: "8001"
+    code-agent: "8002"
+    code-reasoning: "8003"
+    code-long-context: "8004"
+  routerSettings:
+    routing_strategy: least-busy
+    health_check_interval: 15
+    allowed_fails: 3
+    num_retries: 3
+    fallbacks: []
+  drop_params: true
+  # -- Additional environment variables for LiteLLM
+  extraEnv:
+    LITELLM_LOG: "INFO"
+    #DATABASE_URL: "postgresql://<user>:<password>@<host>:<port>/<dbname>"  # Set to a PostgreSQL URL for persistent usage tracking
+  secret:
+    # Create a Kubernetes Secret for LiteLLM credentials (master_key/salt_key)
+    create: true
+    # Optional: provide values to override generated keys. If empty, Helm will
+    # generate random keys during template rendering.
+    master_key: "password"
+    salt_key: "abc123"
+
+# =============================================================================
+# vLLM Backend Settings
+# =============================================================================
+vllm:
+  image:
+    repository: vllm/vllm-openai
+    tag: latest
+  # -- Shared environment variables for all vLLM instances
+  extraEnv:
+    VLLM_LOGGING_LEVEL: "INFO"
+    VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
+  # -- Persistent volume for model storage (shared across pods)
+  modelStorage:
+    storageClass: ""
+    size: 200Gi
+    mountPath: /models
+    # -- Host path for model cache (e.g. ~/.cache/huggingface).
+    # When set, uses a hostPath volume instead of a PVC, sharing the host's
+    # Hugging Face cache so models don't need to be re-downloaded per pod.
+    # Use an absolute path — Kubernetes does not expand ~.
+    hostPath: ""
+
+# =============================================================================
+# TP=1 (Single-Node Dense) Model Definitions
+# =============================================================================
+modelsTp1: []
+
+# =============================================================================
+# TP=2 (Multi-Node MoE) Model Definitions
+# =============================================================================
+modelsTp2: []
+
+# =============================================================================
+# Monitoring Settings
+# =============================================================================
+servicemonitor:
+  enabled: false
+  # -- Prometheus release name used in the ServiceMonitor's release label
+  prometheusReleaseName: dev-kube-prometheus-stack
+  namespace: llmd-stack
+
+# =============================================================================
+# PostgreSQL chart/cluster values (CloudNativePG cluster chart)
+# =============================================================================
+postgres:
+  enabled: true
+  namespace: llmd-stack
+  host: test-litellm-db-cluster-rw
+  # -- Cluster operation mode (standalone/replica/recovery)
+  mode: standalone
+  # -- PostgreSQL major version
+  version:
+    postgresql: "16"
+  # -- Cluster-specific settings forwarded to the cluster subchart
+  cluster:
+    instances: 1
+    storage:
+      size: 8Gi
+      storageClass: ""
+    imagePullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    postgresql:
+      parameters: {}
+  # -- Credentials used to build the DATABASE_URL secret (kept here for the secret template)
+  postgresqlUsername: app
+  postgresqlPassword: password
+  postgresqlDatabase: litellm
+  service:
+    port: 5432
+
+# =============================================================================
+# llm-d Router Settings
+# =============================================================================
+llm-d-router-standalone:
+  router:
+    extraServicePorts:
+      - name: http
+        port: 80
+        protocol: TCP
+        targetPort: 8081
+
+    epp:
+      replicas: 1
+      flags:
+        v: 2
+      pluginsConfigFile: "optimized-baseline-plugins.yaml"
+      pluginsCustomConfig:
+        optimized-baseline-plugins.yaml: |
+          apiVersion: llm-d.ai/v1alpha1
+          kind: EndpointPickerConfig
+          plugins:
+          - type: queue-scorer
+          - type: kv-cache-utilization-scorer
+          - type: prefix-cache-scorer
+          - type: no-hit-lru-scorer
+          schedulingProfiles:
+          - name: default
+            plugins:
+            - pluginRef: queue-scorer
+              weight: 2
+            - pluginRef: kv-cache-utilization-scorer
+              weight: 2
+            - pluginRef: prefix-cache-scorer
+              weight: 3
+            - pluginRef: no-hit-lru-scorer
+              weight: 2
+      resources:
+        requests:
+          cpu: "4"
+          memory: 8Gi
+        limits:
+          memory: 16Gi
+
+    inferencePool:
+      failureMode: "FailOpen"
+
+    modelServers:
+      protocol: http
+      matchLabels:
+        llm-d.ai/guide: "optimized-baseline"
+
+    proxy:
+      args:
+        - "--service-node"
+        - "envoy-sidecar"
+        - "--log-level"
+        - "warn"
+        - "--concurrency"
+        - "8"
+        - "--drain-strategy"
+        - "immediate"
+        - "--drain-time-s"
+        - "60"
+        - "-c"
+        - "/etc/envoy/envoy.yaml"
+      resources:
+        requests:
+          cpu: "4"
+          memory: 8Gi
+        limits:
+          memory: 16Gi
+
+    #tracing:
+    #  otelExporterEndpoint: "http://localhost:4317"
+    #  sampling:
+    #    sampler: "parentbased_traceidratio"
+    #     samplerArg: "0.1"

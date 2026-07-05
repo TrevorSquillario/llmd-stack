@@ -1,0 +1,9 @@
+dependencies:
+- name: cloudnative-pg
+  repository: https://cloudnative-pg.github.io/charts
+  version: 0.29.0
+- name: llm-d-router-standalone
+  repository: oci://ghcr.io/llm-d/charts
+  version: v0.9.0
+digest: sha256:025744f78b81471d35edb066b53b14e4f878b3fcea4b37afaaa27d5557d33b48
+generated: "2026-07-04T22:15:37.247962953-06:00"

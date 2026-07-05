@@ -1,0 +1,99 @@
+{{- if .Values.litellm.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-litellm
+  labels:
+    {{- include "llmd-stack.litellm.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.litellm.replicas }}
+  selector:
+    matchLabels:
+      {{- include "llmd-stack.litellm.labels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "llmd-stack.litellm.labels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/litellm-configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "llmd-stack.fullname" . }}-litellm
+      {{- with .Values.litellm.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: litellm
+          image: "{{ .Values.litellm.image.repository }}:{{ .Values.litellm.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args:
+            - "--config"
+            - "/etc/litellm/litellm_config.yaml"
+            - "--port"
+            - "{{ .Values.litellm.service.port }}"
+            - "--num_workers"
+            - "4"
+          ports:
+            - name: http
+              containerPort: {{ .Values.litellm.service.port }}
+              protocol: TCP
+          env:
+            - name: LITELLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llmd-stack.fullname" . }}-litellm
+                  key: master_key
+                  optional: true
+            - name: LITELLM_SALT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llmd-stack.fullname" . }}-litellm
+                  key: salt_key
+                  optional: true
+{{- if .Values.postgres.enabled }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llmd-stack.fullname" . }}-postgres
+                  key: DATABASE_URL
+{{- else if .Values.litellm.extraEnv.DATABASE_URL }}
+            - name: DATABASE_URL
+              value: {{ .Values.litellm.extraEnv.DATABASE_URL | quote }}
+{{- end }}
+            - name: LITELLM_LOG
+              value: {{ .Values.litellm.extraEnv.LITELLM_LOG | quote }}
+            - name: PROMETHEUS_MULTIPROC_DIR # Required then num_workers > 1 for Prometheus metrics collection across workers
+              value: "/prometheus_multiproc"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/litellm
+              readOnly: true
+          resources:
+            {{- toYaml .Values.litellm.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health/readiness
+              port: {{ .Values.litellm.service.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: {{ .Values.litellm.service.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "llmd-stack.fullname" . }}-litellm
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-litellm
+  labels:
+    {{- include "llmd-stack.litellm.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+{{- end }}

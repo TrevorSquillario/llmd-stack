@@ -1,0 +1,280 @@
+{{- range $model := .Values.modelsTp2 }}
+{{- if $model.enabled }}
+---
+# =============================================================================
+# {{ $model.name }} — Multi-Node vLLM via LeaderWorkerSet (LWS)
+# Tensor Parallelism: {{ $model.tensorParallelSize }} across {{ $model.tensorParallelSize }} nodes
+# Model: {{ $model.model }}
+# Port: {{ $model.port }}
+# =============================================================================
+
+# --- Service (fronts the Leader pod) ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}
+  labels:
+    {{- include "llmd-stack.model.labels" $ | nindent 4 }}
+    app.kubernetes.io/model-name: {{ $model.name }}
+    llm-d.ai/model: {{ $model.name }}
+    llm-d.ai/role: {{ $model.role | default "decode" }}
+    llm-d.ai/guide: {{ $model.guide | default "optimized-baseline" }}
+    app.kubernetes.io/model-port: {{ $model.port | quote }}
+    vllm/tensor-parallel-size: {{ $model.tensorParallelSize | quote }}
+    vllm/multi-node: "true"
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ $model.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "llmd-stack.model.labels" $ | nindent 4 }}
+    app.kubernetes.io/model-name: {{ $model.name }}
+    llm-d.ai/model: {{ $model.name }}
+    llm-d.ai/role: {{ $model.role | default "decode" }}
+    llm-d.ai/guide: {{ $model.guide | default "optimized-baseline" }}
+    lws.x-k8s.io/role: leader
+
+---
+# --- LeaderWorkerSet ---
+apiVersion: lws.x-k8s.io/v1
+kind: LeaderWorkerSet
+metadata:
+  name: {{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}
+  labels:
+    {{- include "llmd-stack.model.labels" $ | nindent 4 }}
+    app.kubernetes.io/model-name: {{ $model.name }}
+    llm-d.ai/model: {{ $model.name }}
+    app.kubernetes.io/model-port: {{ $model.port | quote }}
+    vllm/tensor-parallel-size: {{ $model.tensorParallelSize | quote }}
+    vllm/multi-node: "true"
+spec:
+  replicas: {{ $model.replicas | default 1 }}
+  size: {{ sub $model.tensorParallelSize 1 }}  # Number of workers (leader is rank 0)
+  restartPolicy: RollingUpdate
+  rolloutStrategy:
+    type: RollingUpdate
+    maxUnavailable: 1
+
+  leaderWorkerTemplate:
+    # =========================================================================
+    # Leader Template (Rank 0 — serves the API)
+    # =========================================================================
+    leaderTemplate:
+      metadata:
+        labels:
+          {{- include "llmd-stack.model.labels" $ | nindent 10 }}
+          app.kubernetes.io/model-name: {{ $model.name }}
+          llm-d.ai/model: {{ $model.name }}
+          llm-d.ai/role: {{ $model.role | default "decode" }}
+          llm-d.ai/guide: {{ $model.guide | default "optimized-baseline" }}
+          llm-d.ai/inferenceServing: "true" # <-- Forces EPP auto-discovery
+          app.kubernetes.io/model-port: {{ $model.port | quote }}
+          vllm/tensor-parallel-size: {{ $model.tensorParallelSize | quote }}
+          vllm/multi-node: "true"
+          lws.x-k8s.io/role: leader
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "{{ $model.port }}"
+          prometheus.io/path: "/metrics"
+      spec:
+        {{- with $model.imagePullSecrets }}
+        imagePullSecrets:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with $model.leader.nodeSelector }}
+        nodeSelector:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- if $model.leader.nodeName }}
+        nodeName: {{ $model.leader.nodeName | quote }}
+        {{- end }}
+        hostIPC: true
+        hostPID: true
+        hostNetwork: true                     # <-- Exposes host interfaces (Infiniband/200GbE)
+        dnsPolicy: ClusterFirstWithHostNet    # <-- Preserves internal K8s DNS resolution
+        volumes:
+          - name: dshm
+            emptyDir:
+              medium: Memory
+              sizeLimit: "32Gi"
+          {{- include "llmd-stack.modelStorage.volume" $ | nindent 10 }}
+        containers:
+          - name: vllm
+            image: "{{ $.Values.vllm.image.repository }}:{{ $.Values.vllm.image.tag }}"
+            imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+            args:
+              - "--model={{ $model.model }}"
+              - "--tensor-parallel-size={{ $model.tensorParallelSize }}"
+              - "--pipeline-parallel-size={{ $model.pipelineParallelSize }}"
+              - "--max-model-len={{ $model.maxModelLen }}"
+              - "--gpu-memory-utilization={{ $model.gpuMemoryUtilization }}"
+              - "--port={{ $model.port }}"
+              - "--host=0.0.0.0"
+              - "--api-key=none"
+              - "--trust-remote-code"
+              - "--block-size=128"
+              {{- if eq (int $model.tensorParallelSize) 1 }}
+              {{- else }}
+              - "--distributed-executor-backend=mp"
+              {{- end }}
+              {{- range $i, $arg := $model.extraArgs }}
+              - "{{ $arg }}"
+              {{- end }}
+            ports:
+              - name: http
+                containerPort: {{ $model.port }}
+                protocol: TCP
+            env:
+              {{- include "llmd-stack.model.env" (dict "model" $model "ctx" $) | nindent 14 }}
+              - name: RANK
+                value: "0"
+              - name: VLLM_LEADER_ADDR
+                valueFrom:
+                  fieldRef:
+                    fieldPath: status.podIP
+              - name: NCCL_CROSS_NODE
+                value: "1"
+              - name: CUDA_DEVICE_MAX_CONNECTIONS
+                value: "1"
+            volumeMounts:
+              - name: dshm
+                mountPath: /dev/shm
+              {{- include "llmd-stack.modelStorage.volumeMount" $ | nindent 14 }}
+            resources:
+              {{- toYaml $model.resources | nindent 14 }}
+            livenessProbe:
+              httpGet:
+                path: /health
+                port: {{ $model.port }}
+              initialDelaySeconds: 180
+              periodSeconds: 30
+              timeoutSeconds: 10
+              failureThreshold: 6
+            readinessProbe:
+              httpGet:
+                path: /health
+                port: {{ $model.port }}
+              initialDelaySeconds: 90
+              periodSeconds: 15
+              timeoutSeconds: 10
+              failureThreshold: 3
+            startupProbe:
+              httpGet:
+                path: /health
+                port: {{ $model.port }}
+              initialDelaySeconds: 60
+              periodSeconds: 10
+              timeoutSeconds: 5
+              failureThreshold: 90
+
+    # =========================================================================
+    # Worker Template (Rank 1..N — compute-only, no API server)
+    # =========================================================================
+    workerTemplate:
+      metadata:
+        labels:
+          {{- include "llmd-stack.model.labels" $ | nindent 10 }}
+          app.kubernetes.io/model-name: {{ $model.name }}
+          llm-d.ai/model: {{ $model.name }}
+          llm-d.ai/role: {{ $model.role | default "decode" }}
+          llm-d.ai/guide: {{ $model.guide | default "optimized-baseline" }}
+          llm-d.ai/inferenceServing: "true" # <-- Forces EPP auto-discovery
+          app.kubernetes.io/model-port: {{ $model.port | quote }}
+          vllm/tensor-parallel-size: {{ $model.tensorParallelSize | quote }}
+          vllm/multi-node: "true"
+          lws.x-k8s.io/role: worker
+      spec:
+        {{- with $model.imagePullSecrets }}
+        imagePullSecrets:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with $model.worker.nodeSelector }}
+        nodeSelector:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- if $model.worker.nodeName }}
+        nodeName: {{ $model.worker.nodeName | quote }}
+        {{- end }}
+        hostIPC: true
+        hostPID: true
+        hostNetwork: true                     # <-- Exposes host interfaces (Infiniband/200GbE)
+        dnsPolicy: ClusterFirstWithHostNet    # <-- Preserves internal K8s DNS resolution
+        volumes:
+          - name: dshm
+            emptyDir:
+              medium: Memory
+              sizeLimit: "32Gi"
+          {{- include "llmd-stack.modelStorage.volume" $ | nindent 10 }}
+        containers:
+          - name: vllm
+            image: "{{ $.Values.vllm.image.repository }}:{{ $.Values.vllm.image.tag }}"
+            imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+            args:
+              - "--model"
+              - "{{ $model.model }}"
+              - "--tensor-parallel-size"
+              - "{{ $model.tensorParallelSize }}"
+              - "--pipeline-parallel-size"
+              - "{{ $model.pipelineParallelSize }}"
+              - "--max-model-len"
+              - "{{ $model.maxModelLen }}"
+              - "--gpu-memory-utilization"
+              - "{{ $model.gpuMemoryUtilization }}"
+              - "--dtype"
+              - "{{ $model.dtype | default "auto" }}"
+              - "--port"
+              - "{{ $model.port }}"
+              - "--host"
+              - "0.0.0.0"
+              - "--api-key"
+              - "none"
+              - "--trust-remote-code"
+              - "--enforce-eager"
+              {{- if eq (int $model.tensorParallelSize) 1 }}
+              {{- else }}
+              - "--distributed-executor-backend"
+              - "mp"
+              {{- end }}
+              {{- if $model.extraArgs }}
+              {{- toYaml $model.extraArgs | nindent 12 }}
+              {{- end }}
+            ports:
+              - name: http
+                containerPort: {{ $model.port }}
+                protocol: TCP
+            env:
+              {{- include "llmd-stack.model.env" (dict "model" $model "ctx" $) | nindent 14 }}
+              - name: RANK
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.labels['lws.x-k8s.io/rank']
+              - name: VLLM_LEADER_ADDR
+                valueFrom:
+                  fieldRef:
+                    fieldPath: status.hostIP
+              - name: NCCL_CROSS_NODE
+                value: "1"
+              - name: CUDA_DEVICE_MAX_CONNECTIONS
+                value: "1"
+            volumeMounts:
+              - name: dshm
+                mountPath: /dev/shm
+              {{- include "llmd-stack.modelStorage.volumeMount" $ | nindent 14 }}
+            resources:
+              {{- toYaml $model.resources | nindent 14 }}
+            # Workers do not serve the API, so no HTTP probes.
+            # They rely on the leader's health for liveness.
+            startupProbe:
+              exec:
+                command:
+                  - nvidia-smi
+              initialDelaySeconds: 15
+              periodSeconds: 30
+              timeoutSeconds: 10
+              failureThreshold: 30
+---
+{{- end }}
+{{- end }}

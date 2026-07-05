@@ -1,0 +1,24 @@
+{{- if .Values.litellm.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-litellm
+  labels:
+    {{- include "llmd-stack.litellm.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.litellm.service.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  type: {{ .Values.litellm.service.type | default "ClusterIP" }}
+  ports:
+    - name: http
+      port: {{ .Values.litellm.service.port | default 4000 }}
+      targetPort: {{ default 4000 (default .Values.litellm.service.port .Values.litellm.service.targetPort) }}
+      protocol: TCP
+      {{ if eq (default "ClusterIP" .Values.litellm.service.type) "NodePort" }}
+      nodePort: {{ .Values.litellm.service.nodePort | default 32000 }} # Must be between 30000-32767
+      {{ end }}
+  selector:
+    {{- include "llmd-stack.litellm.labels" . | nindent 4 }}
+{{- end }}

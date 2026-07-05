@@ -1,0 +1,27 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .Release.Name }}-litellm-db-cluster
+  namespace: {{ .Values.postgres.namespace }}
+spec:
+  # Number of instances (1 primary + replicas)
+  instances: {{ .Values.postgres.cluster.instances | default 2 }}
+
+  # Configure storage
+  storage:
+    size: {{ .Values.postgres.cluster.storage.size | default "10Gi" }}
+{{- with .Values.postgres.cluster.storage.storageClass }}
+    storageClass: {{ . }}
+{{- end }}
+
+  # Init database and owner
+  bootstrap:
+    initdb:
+      database: {{ .Values.postgres.postgresqlDatabase | default "litellm" }}
+      owner: {{ .Values.postgres.postgresqlUsername | default "app" }}
+      # Reference the secret containing initial credentials for the owner
+      secret:
+        name: {{ include "llmd-stack.fullname" . }}-postgres
+
+{{- end }}

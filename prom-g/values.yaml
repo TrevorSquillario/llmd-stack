@@ -1,0 +1,34 @@
+kube-prometheus-stack:
+  prometheus:
+    enabled: true
+    service:
+      type: NodePort
+      nodePort: 32001
+    prometheusSpec:
+      serviceMonitorSelectorNilUsesHelmValues: false 
+      podMonitorSelectorNilUsesHelmValues: false
+
+  grafana:
+    enabled: true
+    service:
+      type: NodePort
+      nodePort: 32002
+    # Plugins to install in Grafana
+    plugins: []
+    # Provision a sample datasource via datasources.yaml content
+    # datasources:
+    #   datasources.yaml:
+    #     apiVersion: 1
+    #     datasources:
+    #       - name: Prometheus
+    #         type: prometheus
+    #         url: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local
+    #         access: proxy
+    # Dashboard sidecar (Method B): enable and configure label search
+    sidecar:
+      dashboards:
+        enabled: true
+        # sidecar looks for ConfigMaps with key: <label>: "<labelValue>"
+        label: grafana_dashboard
+        labelValue: "1"
+        searchNamespace: ALL

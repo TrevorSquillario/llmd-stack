@@ -1,0 +1,170 @@
+{{- range $model := .Values.modelsTp1 }}
+{{- if $model.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}
+  labels:
+    {{- include "llmd-stack.model.labels" $ | nindent 4 }}
+    app.kubernetes.io/model-name: {{ $model.name }}
+    llm-d.ai/model: {{ $model.name }}
+    llm-d.ai/role: {{ $model.role | default "decode" }}
+    llm-d.ai/guide: {{ $model.guide | default "optimized-baseline" }}
+    app.kubernetes.io/model-port: {{ $model.port | quote }}
+    vllm/tensor-parallel-size: {{ $model.tensorParallelSize | quote }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ $model.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "llmd-stack.model.labels" $ | nindent 4 }}
+    app.kubernetes.io/model-name: {{ $model.name }}
+    llm-d.ai/model: {{ $model.name }}
+    llm-d.ai/role: {{ $model.role | default "decode" }}
+    llm-d.ai/guide: {{ $model.guide | default "optimized-baseline" }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}
+  labels:
+    {{- include "llmd-stack.model.labels" $ | nindent 4 }}
+    app.kubernetes.io/model-name: {{ $model.name }}
+    llm-d.ai/model: {{ $model.name }}
+    llm-d.ai/role: {{ $model.role | default "decode" }}
+    llm-d.ai/guide: {{ $model.guide | default "optimized-baseline" }}
+    app.kubernetes.io/model-port: {{ $model.port | quote }}
+    vllm/tensor-parallel-size: {{ $model.tensorParallelSize | quote }}
+spec:
+  replicas: {{ $model.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "llmd-stack.model.labels" $ | nindent 6 }}
+      app.kubernetes.io/model-name: {{ $model.name }}
+      llm-d.ai/model: {{ $model.name }}
+  template:
+    metadata:
+      labels:
+        {{- include "llmd-stack.model.labels" $ | nindent 8 }}
+        app.kubernetes.io/model-name: {{ $model.name }}
+        llm-d.ai/model: {{ $model.name }}
+        llm-d.ai/role: {{ $model.role | default "decode" }}
+        llm-d.ai/guide: {{ $model.guide | default "optimized-baseline" }}
+        llm-d.ai/inferenceServing: "true" # <-- Forces EPP auto-discovery
+        app.kubernetes.io/model-port: {{ $model.port | quote }}
+        vllm/tensor-parallel-size: {{ $model.tensorParallelSize | quote }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ $model.port }}"
+        prometheus.io/path: "/metrics"
+    spec:
+      {{- with $model.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $model.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $model.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $model.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      hostIPC: true
+      hostPID: true
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: "16Gi"
+        {{- include "llmd-stack.modelStorage.volume" $ | nindent 8 }}
+      containers:
+        - name: vllm
+          image: "{{ $.Values.vllm.image.repository }}:{{ $.Values.vllm.image.tag }}"
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          args:
+            - "--model={{ $model.model }}"
+            - "--tensor-parallel-size={{ $model.tensorParallelSize }}"
+            - "--pipeline-parallel-size={{ $model.pipelineParallelSize }}"
+            - "--max-model-len={{ $model.maxModelLen }}"
+            - "--gpu-memory-utilization={{ $model.gpuMemoryUtilization }}"
+            - "--port={{ $model.port }}"
+            - "--host=0.0.0.0"
+            - "--trust-remote-code"
+              {{- if $model.extraArgs }}
+              {{- toYaml $model.extraArgs | nindent 12 }}
+              {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ $model.port }}
+              protocol: TCP
+          env:
+            {{- include "llmd-stack.model.env" (dict "model" $model "ctx" $) | nindent 12 }}
+          volumeMounts:
+            - name: dshm
+              mountPath: /dev/shm
+            {{- include "llmd-stack.modelStorage.volumeMount" $ | nindent 12 }}
+          resources:
+            {{- toYaml $model.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ $model.port }}
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ $model.port }}
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: {{ $model.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
+{{- end }}
+{{- end }}
+
+{{- /* Determine if any model is enabled to decide whether to create the PVC */}}
+{{- $anyModelEnabled := false }}
+{{- range .Values.modelsTp1 }}
+{{- if .enabled }}{{ $anyModelEnabled = true }}{{ end }}
+{{- end }}
+{{- range .Values.modelsTp2 }}
+{{- if .enabled }}{{ $anyModelEnabled = true }}{{ end }}
+{{- end }}
+{{- /* Only create PVC when hostPath is not set (hostPath bypasses PVC) */}}
+{{- if and $anyModelEnabled (not .Values.vllm.modelStorage.hostPath) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-model-storage
+  labels:
+    {{- include "llmd-stack.labels" . | nindent 4 }}
+spec:
+  {{- with .Values.vllm.modelStorage.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  accessModes:
+    - ReadOnlyMany
+  resources:
+    requests:
+      storage: {{ .Values.vllm.modelStorage.size }}
+{{- end }}

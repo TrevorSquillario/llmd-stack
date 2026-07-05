@@ -1,0 +1,53 @@
+
+{{- if or .Values.modelsTp1 .Values.modelsTp2 }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-copilot
+  labels:
+    {{- include "llmd-stack.litellm.labels" . | nindent 4 }}
+data:
+  copilot.json: |
+    [
+      {
+        "name": "vLLM",
+        "vendor": "customendpoint",
+        "apiType": "chat-completions",
+        "models": [
+{{- $first := true }}
+{{- range $model := .Values.modelsTp1 }}
+{{- if $model.enabled }}
+{{- if not $first }},{{ end }}
+          {
+            "id": "{{ $model.model }}",
+            "name": "{{ $model.model }}",
+            "url": "http://{{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}:{{ $model.port }}/v1",
+            "toolCalling": true,
+            "vision": false,
+            "maxInputTokens": {{ default 65536 $model.maxModelLen }},
+            "maxOutputTokens": 16000
+          }
+{{- $first = false }}
+{{- end }}
+{{- end }}
+
+{{- range $model := .Values.modelsTp2 }}
+{{- if $model.enabled }}
+{{- if not $first }},{{ end }}
+          {
+            "id": "{{ $model.model }}",
+            "name": "{{ $model.model }}",
+            "url": "http://{{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}:{{ $model.port }}/v1",
+            "toolCalling": true,
+            "vision": false,
+            "maxInputTokens": {{ default 65536 $model.maxModelLen }},
+            "maxOutputTokens": 16000
+          }
+{{- $first = false }}
+{{- end }}
+{{- end }}
+
+        ]
+      }
+    ]
+{{- end }}

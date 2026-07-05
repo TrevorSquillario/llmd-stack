@@ -1,0 +1,17 @@
+{{- if .Values.servicemonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}
+  labels:
+    {{- include "llmd-stack.labels" . | nindent 4 }}
+    release: {{ .Values.servicemonitor.prometheusReleaseName }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "llmd-stack.selectorLabels" . | nindent 6 }}
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+{{- end }}
