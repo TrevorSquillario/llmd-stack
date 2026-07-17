@@ -130,8 +130,8 @@ Set llm-d api base path
 */}}
 {{- define "llmd-stack.apiBasePath" -}}
 {{- if index .Values "llm-d-router-standalone" "router" "enabled" -}}
-{{- printf "http://%s-epp/v1" .Release.Name -}}
+{{- printf "http://%s-epp.%s.svc.cluster.local/v1" .Release.Name .Release.Namespace -}}
 {{- else -}}
-{{- printf "http://%s-inference-gateway/v1" .Release.Name -}}
+{{- printf "http://%s-inference-gateway.%s.svc.cluster.local/v1" .Release.Name .Release.Namespace -}}
 {{- end -}}
 {{- end -}}

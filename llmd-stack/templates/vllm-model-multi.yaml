@@ -1,3 +1,4 @@
+{{- $root := . }}
 {{- range $model := .Values.modelsMultiNode }}
 {{- if $model.enabled }}
 ---
@@ -17,9 +18,6 @@ metadata:
   labels:
     {{- include "llmd-stack.model.labels" $ | nindent 4 }}
     app.kubernetes.io/model-name: {{ $model.name }}
-    llm-d.ai/model: {{ $model.name }}
-    llm-d.ai/role: {{ $model.role | default "decode" }}
-    llm-d.ai/guide: {{ $model.guide | default "optimized-baseline" }}
     app.kubernetes.io/model-port: {{ $model.port | quote }}
     vllm/tensor-parallel-size: {{ $model.tensorParallelSize | quote }}
     vllm/multi-node: "true"
@@ -45,9 +43,6 @@ metadata:
   labels:
     {{- include "llmd-stack.model.labels" $ | nindent 4 }}
     app.kubernetes.io/model-name: {{ $model.name }}
-    llm-d.ai/model: {{ $model.name }}
-    llm-d.ai/role: {{ $model.role | default "decode" }}
-    llm-d.ai/guide: {{ $model.guide | default "optimized-baseline" }}
     app.kubernetes.io/model-port: {{ $model.port | quote }}
     vllm/tensor-parallel-size: {{ $model.tensorParallelSize | quote }}
     vllm/multi-node: "true"
@@ -172,6 +167,11 @@ spec:
                 add: ["IPC_LOCK"]
             env:
               {{- include "llmd-stack.model.env" (dict "model" $model "ctx" $) | nindent 14 }}
+              - name: VLLM_API_KEY
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ include "llmd-stack.fullname" $root }}-litellm
+                    key: master_key
               - name: NCCL_CROSS_NODE
                 value: "1"
               - name: CUDA_DEVICE_MAX_CONNECTIONS
@@ -215,10 +215,6 @@ spec:
         labels:
           {{- include "llmd-stack.model.labels" $ | nindent 10 }}
           app.kubernetes.io/model-name: {{ $model.name }}
-          llm-d.ai/model: {{ $model.name }}
-          llm-d.ai/role: {{ $model.role | default "decode" }}
-          llm-d.ai/guide: {{ $model.guide | default "optimized-baseline" }}
-          llm-d.ai/inferenceServing: "true" # <-- Forces EPP auto-discovery
           app.kubernetes.io/model-port: {{ $model.port | quote }}
           vllm/tensor-parallel-size: {{ $model.tensorParallelSize | quote }}
           vllm/multi-node: "true"
@@ -291,6 +287,11 @@ spec:
                 protocol: TCP
             env:
               {{- include "llmd-stack.model.env" (dict "model" $model "ctx" $) | nindent 14 }}
+              - name: VLLM_API_KEY
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ include "llmd-stack.fullname" $root }}-litellm
+                    key: master_key
               - name: NCCL_CROSS_NODE
                 value: "1"
               - name: CUDA_DEVICE_MAX_CONNECTIONS

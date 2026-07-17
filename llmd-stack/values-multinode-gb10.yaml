@@ -46,7 +46,14 @@ litellm:
   extraEnv:
     LITELLM_LOG: "INFO"
     DATABASE_URL: ""
-    
+  secret:
+    # Create a Kubernetes Secret for LiteLLM credentials (master_key/salt_key)
+    create: true
+    # Optional: provide values to override generated keys. If empty, Helm will
+    # generate random keys during template rendering.
+    master_key: "password"
+    salt_key: "abc123"
+
 # =============================================================================
 # vLLM Backend Settings
 # =============================================================================
@@ -111,6 +118,7 @@ modelsMultiNode:
     extraEnv: {}
     extraArgs:
       - "--max-num-seqs=4"
+      - "--enable-auto-tool-choice"
       - "--tool-call-parser=gemma4"
       - "--reasoning-parser=gemma4"
       - "--kv-cache-dtype=fp8"

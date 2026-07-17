@@ -257,6 +257,7 @@ curl -X POST http://${IP}:8000/v1/chat/completions \
 ```
 export IP=$(kubectl get service test-llmd-stack-model-gemma-4-26b-a4b-it-svc -n llmd-stack -o jsonpath='{.spec.clusterIP}')
 curl -X POST http://${IP}:8000/v1/chat/completions \
+    -H "Authorization: Bearer password" \
     -H 'Content-Type: application/json' \
     -d '{
         "model": "google/gemma-4-26B-A4B-it",
@@ -270,6 +271,7 @@ curl -X POST http://${IP}:8000/v1/chat/completions \
 ```
 export IP=$(kubectl get service test-epp -n llmd-stack -o jsonpath='{.spec.clusterIP}')
 curl -X POST http://${IP}/v1/chat/completions \
+    -H "Authorization: Bearer password" \
     -H 'Content-Type: application/json' \
     -d '{
         "model": "google/gemma-4-26B-A4B-it",
@@ -349,7 +351,7 @@ genai-perf profile \
   --output-tokens-stddev 0 \
   --streaming \
   --request-rate 5.0 \
-  --request-count 50 \
+  --request-count 5 \
   --num-dataset-entries 50 \
   --warmup-request-count 5 \
   --verbose
@@ -382,6 +384,12 @@ Error: unable to continue with install: CustomResourceDefinition "backups.postgr
 ```
 kubectl get crds -o name | grep cnpg.io | xargs kubectl delete
 ```
+
+Error: The table `public.LiteLLM_UserTable` does not exist in the current database.
+```
+kubectl delete pod -n llmd-stack test-llmd-stack-litellm-78dbffd9f-ztqkj
+```
+
 
 PostgreSQL database 
 ```

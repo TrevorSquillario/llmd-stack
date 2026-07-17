@@ -151,7 +151,7 @@ llm-d-router-standalone:
     epp:
       replicas: 1
       flags:
-        v: 2
+        v: 4
       pluginsConfigFile: "optimized-baseline-plugins.yaml"
       pluginsCustomConfig:
         optimized-baseline-plugins.yaml: |

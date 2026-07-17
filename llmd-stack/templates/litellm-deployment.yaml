@@ -64,6 +64,8 @@ spec:
               value: {{ .Values.litellm.extraEnv.LITELLM_LOG | quote }}
             - name: PROMETHEUS_MULTIPROC_DIR # Required then num_workers > 1 for Prometheus metrics collection across workers
               value: "/prometheus_multiproc"
+            - name: ENFORCE_PRISMA_MIGRATION_CHECK # Chart startup error fix: The table `public.LiteLLM_UserTable` does not exist in the current database.
+              value: "true"
           volumeMounts:
             - name: config
               mountPath: /etc/litellm
