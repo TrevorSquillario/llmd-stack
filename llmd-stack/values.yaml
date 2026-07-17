@@ -70,6 +70,7 @@ vllm:
   extraEnv:
     VLLM_LOGGING_LEVEL: "INFO"
     VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
+    HF_HUB_ENABLE_HF_TRANSFER: "1"
   # -- Persistent volume for model storage (shared across pods)
   modelStorage:
     storageClass: ""
@@ -84,12 +85,12 @@ vllm:
 # =============================================================================
 # TP=1 (Single-Node Dense) Model Definitions
 # =============================================================================
-modelsTp1: []
+modelsSingleNode: []
 
 # =============================================================================
 # TP=2 (Multi-Node MoE) Model Definitions
 # =============================================================================
-modelsTp2: []
+modelsMultiNode: []
 
 # =============================================================================
 # Monitoring Settings
@@ -140,6 +141,7 @@ postgres:
 # =============================================================================
 llm-d-router-standalone:
   router:
+    enabled: true
     extraServicePorts:
       - name: http
         port: 80
@@ -212,3 +214,14 @@ llm-d-router-standalone:
     #  sampling:
     #    sampler: "parentbased_traceidratio"
     #     samplerArg: "0.1"
+
+# ============================================================================
+# Schema-Compliant Subchart Overrides for llm-d-infra
+# ============================================================================
+llm-d-infra:
+  gateway:
+    enabled: false
+    # Tells the chart to bind right to your Istio pilot installation
+    gatewayClassName: "istio" 
+    exposure:
+      type: "external" # Hooks up to MetalLB cleanly

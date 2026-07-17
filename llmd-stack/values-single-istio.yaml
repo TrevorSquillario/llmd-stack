@@ -1,0 +1,126 @@
+# =============================================================================
+# Developer Copilot — Smoketest Values (1x DGX Spark Node)
+# =============================================================================
+
+global:
+  clusterDomain: cluster.local
+  registry: docker.io
+  imagePullPolicy: IfNotPresent
+  labels:
+    app.kubernetes.io/part-of: llmd-stack
+
+# =============================================================================
+# LiteLLM — Lightweight for sandbox
+# =============================================================================
+litellm:
+  enabled: true
+  image:
+    repository: ghcr.io/berriai/litellm
+    tag: main-latest
+  replicas: 1
+  service:
+    type: NodePort
+    port: 4000
+    targetPort: 4000
+    nodePort: 32000
+  resources:
+    requests:
+      cpu: "1"
+      memory: "2Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+  modelAliases:
+    code-fast: "8001"
+    code-agent: "8002"
+    code-reasoning: "8003"
+    code-long-context: "8004"
+  routerSettings:
+    routing_strategy: least-busy
+    health_check_interval: 15
+    allowed_fails: 3
+    num_retries: 3
+    fallbacks:
+      - code-fast: [code-agent]
+  drop_params: true
+  extraEnv:
+    LITELLM_LOG: "INFO"
+    DATABASE_URL: ""
+    
+# =============================================================================
+# vLLM Backend Settings
+# =============================================================================
+vllm:
+  image:
+    repository: vllm/vllm-openai
+    tag: latest
+  extraEnv:
+    VLLM_LOGGING_LEVEL: "INFO"
+  modelStorage:
+    storageClass: ""
+    #size: 100Gi
+    mountPath: /root/.cache/huggingface
+    # -- Host path for Hugging Face model cache.
+    # Shares the host's ~/.cache/huggingface so models are downloaded once.
+    # NOTE: Kubernetes does not expand ~ — use the absolute path, e.g.:
+    #   /home/trevor/.cache/huggingface
+    # or the Docker root:
+    #   /root/.cache/huggingface
+    hostPath: /home/trevor/.cache/huggingface
+
+# =============================================================================
+# TP=1 Models — Fit within 128GB Unified Memory per DGX Spark node
+# =============================================================================
+modelsSingleNode:
+  - name: gemma-4-26b-a4b-it
+    port: 8000
+    model: google/gemma-4-26B-A4B-it
+    tensorParallelSize: 1
+    pipelineParallelSize: 1
+    maxModelLen: 262144
+    gpuMemoryUtilization: 0.5
+    enabled: true
+    resources:
+      limits:
+        cpu: "4"
+        memory: "100Gi"
+        nvidia.com/gpu: 1
+      requests:
+        cpu: "2"
+        memory: "70Gi"
+        nvidia.com/gpu: 1
+    #nodeSelector:
+    #  kubernetes.io/hostname: dgx-spark-1
+    affinity: {}
+    tolerations: []
+    extraEnv: {}
+    extraArgs:
+      - "--max-num-seqs=4"
+      - "--tool-call-parser=gemma4"
+      - "--reasoning-parser=gemma4"
+      - "--enable-auto-tool-choice"
+      - "--enable-prefix-caching"
+      - "--enable-chunked-prefill"
+      - "--kv-cache-dtype=fp8"
+      - "--max-num-batched-tokens=16384"
+      - "--default-chat-template-kwargs={\"enable_thinking\": true}"
+    replicas: 2
+
+servicemonitor:
+  enabled: true
+
+
+llm-d-router-standalone:
+  router:
+    enabled: false
+
+# ============================================================================
+# Schema-Compliant Subchart Overrides for llm-d-infra
+# ============================================================================
+llm-d-infra:
+  gateway:
+    enabled: true
+    # Tells the chart to bind right to your Istio pilot installation
+    gatewayClassName: "istio" 
+    exposure:
+      type: "external" # Hooks up to MetalLB cleanly

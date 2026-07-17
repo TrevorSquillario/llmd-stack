@@ -20,13 +20,9 @@ maintainers:
   - name: Trevor Squillario
     email: Trevor.Squillario@Dell.com
 dependencies:
-  - name: cloudnative-pg
-    version: "0.29.0"
-    repository: "https://cloudnative-pg.github.io/charts"
-    condition: postgres.enabled
-  #- name: llm-d-infra
-  #  version: "1.4.0"
-  #  repository: "https://llm-d-incubation.github.io/llm-d-infra/"
+  - name: llm-d-infra
+    version: "1.4.0"
+    repository: "https://llm-d-incubation.github.io/llm-d-infra/"
   - name: llm-d-router-standalone
     version: "v0.9.0"  
     repository: "oci://ghcr.io/llm-d/charts"

@@ -1,0 +1,26 @@
+apiVersion: mellanox.com/v1alpha1
+kind: NicClusterPolicy
+metadata:
+  name: nic-cluster-policy
+spec:
+  # Installs the RDMA Shared Device Plugin to expose HCA devices
+  rdmaSharedDevicePlugin:
+    image: k8s-rdma-shared-dev-plugin
+    repository: ghcr.io/mellanox
+    version: v1.5.2
+    config: |
+      {
+        "configList": [
+          {
+            "resourceName": "rdma_shared_device_a",
+            "rdmaHcaMax": 63,
+            "selectors": {
+              "vendors": [],
+              "deviceIDs": [],
+              "drivers": [],
+              "ifNames": ["enp1s0f0np0", "enP2p1s0f0np0"],
+              "linkTypes": []
+            }
+          }
+        ]
+      }

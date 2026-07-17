@@ -71,10 +71,11 @@ vllm:
 # =============================================================================
 # TP=1 Models — Fit within 128GB Unified Memory per DGX Spark node
 # =============================================================================
-modelsTp1:
+modelsSingleNode:
   - name: gemma-4-26b-a4b-it
     port: 8000
     model: google/gemma-4-26B-A4B-it
+    nodes: 1
     tensorParallelSize: 1
     pipelineParallelSize: 1
     maxModelLen: 262144

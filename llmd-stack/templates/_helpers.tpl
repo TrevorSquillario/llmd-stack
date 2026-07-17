@@ -87,8 +87,10 @@ Takes a dict with "model" (the model config) and "ctx" (the root context).
   value: {{ .model.maxModelLen | quote }}
 - name: GPU_MEMORY_UTILIZATION
   value: {{ .model.gpuMemoryUtilization | quote }}
+{{- if .model.dtype }}
 - name: DTYPE
   value: {{ .model.dtype | quote }}
+{{- end }}
 - name: PORT
   value: {{ .model.port | quote }}
 {{- range $key, $value := .model.extraEnv }}
@@ -112,7 +114,6 @@ Uses hostPath when .Values.vllm.modelStorage.hostPath is set, otherwise PVC.
 {{- else }}
   persistentVolumeClaim:
     claimName: {{ include "llmd-stack.fullname" $ }}-model-storage
-    readOnly: true
 {{- end }}
 {{- end }}
 
@@ -122,5 +123,15 @@ Render the model-storage volume mount.
 {{- define "llmd-stack.modelStorage.volumeMount" -}}
 - name: model-storage
   mountPath: {{ $.Values.vllm.modelStorage.mountPath }}
-  readOnly: true
 {{- end }}
+
+{{- /*
+Set llm-d api base path
+*/}}
+{{- define "llmd-stack.apiBasePath" -}}
+{{- if index .Values "llm-d-router-standalone" "router" "enabled" -}}
+{{- printf "http://%s-epp/v1" .Release.Name -}}
+{{- else -}}
+{{- printf "http://%s-inference-gateway/v1" .Release.Name -}}
+{{- end -}}
+{{- end -}}

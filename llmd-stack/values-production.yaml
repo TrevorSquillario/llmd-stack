@@ -90,7 +90,7 @@ vllm:
 # =============================================================================
 # TP=1 Models — Production dense models
 # =============================================================================
-modelsTp1:
+modelsSingleNode:
   # -- code-fast: GLM5-2B chat, TP=2 for throughput on NVL72
   - name: code-fast
     port: 8001
@@ -165,7 +165,7 @@ modelsTp1:
 # =============================================================================
 # TP=2+ Models — Production MoE models with expert parallelism
 # =============================================================================
-modelsTp2:
+modelsMultiNode:
   # -- code-reasoning: DeepSeek-V4-Flash, TP=4 with expert parallel
   - name: code-reasoning
     port: 8003

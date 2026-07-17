@@ -23,7 +23,7 @@ data:
       default_litellm_params:
         drop_params: "{{ .Values.litellm.drop_params }}"
       environment_variables:
-  {{ toYaml .Values.litellm.environment_variables | indent 6 }}
+  {{ toYaml .Values.litellm.environment_variables | nindent 8 }}
       health_check_interval: {{ .Values.litellm.routerSettings.health_check_interval }}
 
     router_settings:
@@ -52,14 +52,17 @@ data:
     # =========================================================================
 
     model_list:
-      {{- range $model := .Values.modelsTp1 }}
+      {{- $root := . }} 
+      
+      {{- range $model := .Values.modelsSingleNode }}
       {{- if $model.enabled }}
       - model_name: {{ $model.model }}
         litellm_params:
           model: openai/{{ $model.model }}
-          api_base: http://{{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}:{{ $model.port }}/v1
+          #  Route to the central llm-d service instead of the individual model pod/port
+          api_base: {{ include "llmd-stack.apiBasePath" $root }}
           api_key: none
-          drop_params: "{{ $.Values.litellm.drop_params }}"
+          drop_params: "{{ $root.Values.litellm.drop_params }}"
           rpm: 1000
           tpm: 100000
           max_retries: 0
@@ -72,14 +75,15 @@ data:
       {{- end }}
       {{- end }}
 
-      {{- range $model := .Values.modelsTp2 }}
+      {{- range $model := .Values.modelsMultiNode }}
       {{- if $model.enabled }}
       - model_name: {{ $model.model }}
         litellm_params:
           model: openai/{{ $model.model }}
-          api_base: http://{{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}:{{ $model.port }}/v1
+          #  Route to the central llm-d service instead of the individual model pod/port
+          api_base: {{ include "llmd-stack.apiBasePath" $root }}
           api_key: none
-          drop_params: {{ $.Values.litellm.drop_params }}
+          drop_params: {{ $root.Values.litellm.drop_params }}
           rpm: 1000
           tpm: 100000
           max_retries: 0

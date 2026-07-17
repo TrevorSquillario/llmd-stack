@@ -1,4 +1,4 @@
-{{- range $model := .Values.modelsTp1 }}
+{{- range $model := .Values.modelsSingleNode }}
 {{- if $model.enabled }}
 ---
 apiVersion: v1
@@ -92,6 +92,7 @@ spec:
           imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
           args:
             - "--model={{ $model.model }}"
+            - "--disable-access-log-for-endpoints=/health,/metrics,/v1/models"
             - "--tensor-parallel-size={{ $model.tensorParallelSize }}"
             - "--pipeline-parallel-size={{ $model.pipelineParallelSize }}"
             - "--max-model-len={{ $model.maxModelLen }}"
@@ -99,6 +100,9 @@ spec:
             - "--port={{ $model.port }}"
             - "--host=0.0.0.0"
             - "--trust-remote-code"
+              {{- if $model.dtype }}
+            - "--dtype={{ $model.dtype }}"
+              {{- end }}
               {{- if $model.extraArgs }}
               {{- toYaml $model.extraArgs | nindent 12 }}
               {{- end }}
@@ -143,10 +147,10 @@ spec:
 
 {{- /* Determine if any model is enabled to decide whether to create the PVC */}}
 {{- $anyModelEnabled := false }}
-{{- range .Values.modelsTp1 }}
+{{- range .Values.modelsSingleNode }}
 {{- if .enabled }}{{ $anyModelEnabled = true }}{{ end }}
 {{- end }}
-{{- range .Values.modelsTp2 }}
+{{- range .Values.modelsMultiNode }}
 {{- if .enabled }}{{ $anyModelEnabled = true }}{{ end }}
 {{- end }}
 {{- /* Only create PVC when hostPath is not set (hostPath bypasses PVC) */}}

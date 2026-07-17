@@ -1,5 +1,5 @@
 
-{{- if or .Values.modelsTp1 .Values.modelsTp2 }}
+{{- if or .Values.modelsSingleNode .Values.modelsMultiNode }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -15,7 +15,7 @@ data:
         "apiType": "chat-completions",
         "models": [
 {{- $first := true }}
-{{- range $model := .Values.modelsTp1 }}
+{{- range $model := .Values.modelsSingleNode }}
 {{- if $model.enabled }}
 {{- if not $first }},{{ end }}
           {
@@ -31,13 +31,13 @@ data:
 {{- end }}
 {{- end }}
 
-{{- range $model := .Values.modelsTp2 }}
+{{- range $model := .Values.modelsMultiNode }}
 {{- if $model.enabled }}
 {{- if not $first }},{{ end }}
           {
             "id": "{{ $model.model }}",
             "name": "{{ $model.model }}",
-            "url": "http://{{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}:{{ $model.port }}/v1",
+            "url": "http://{{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}-svc:{{ $model.port }}/v1",
             "toolCalling": true,
             "vision": false,
             "maxInputTokens": {{ default 65536 $model.maxModelLen }},

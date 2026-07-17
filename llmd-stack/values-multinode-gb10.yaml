@@ -56,6 +56,18 @@ vllm:
     tag: latest
   extraEnv:
     VLLM_LOGGING_LEVEL: "INFO"
+    GLOO_SOCKET_IFNAME: eth0
+    NCCL_SOCKET_IFNAME: eth0
+    UCX_NET_DEVICES: eth0
+    OMPI_MCA_btl_tcp_if_include: eth0
+    TP_SOCKET_IFNAME: eth0
+    NCCL_IB_HCA: rocep1s0f0,roceP2p1s0f0    # both halves for full 200 Gb/s
+    NCCL_IB_DISABLE: 0
+    NCCL_IGNORE_CPU_AFFINITY: 1
+    TORCH_DISTRIBUTED_DEBUG: INFO
+    NCCL_DEBUG: INFO
+    NCCL_ASYNC_ERROR_HANDLING: 1
+    HF_HUB_ENABLE_HF_TRANSFER: 1
   modelStorage:
     storageClass: ""
     #size: 100Gi
@@ -71,12 +83,13 @@ vllm:
 # =============================================================================
 # TP=1 Models — Fit within 128GB Unified Memory per DGX Spark node
 # =============================================================================
-modelsTp1:
+modelsMultiNode:
   - name: gemma-4-26b-a4b-it
     port: 8000
     model: google/gemma-4-26B-A4B-it
+    nodes: 2
     tensorParallelSize: 1
-    pipelineParallelSize: 1
+    pipelineParallelSize: 2
     maxModelLen: 262144
     gpuMemoryUtilization: 0.5
     enabled: true
@@ -85,10 +98,12 @@ modelsTp1:
         cpu: "4"
         memory: "100Gi"
         nvidia.com/gpu: 1
+        rdma/rdma_shared_device_a: "2"
       requests:
         cpu: "2"
         memory: "70Gi"
         nvidia.com/gpu: 1
+        rdma/rdma_shared_device_a: "2"
     #nodeSelector:
     #  kubernetes.io/hostname: dgx-spark-1
     affinity: {}
@@ -98,13 +113,10 @@ modelsTp1:
       - "--max-num-seqs=4"
       - "--tool-call-parser=gemma4"
       - "--reasoning-parser=gemma4"
-      - "--enable-auto-tool-choice"
-      - "--enable-prefix-caching"
-      - "--enable-chunked-prefill"
       - "--kv-cache-dtype=fp8"
       - "--max-num-batched-tokens=16384"
       - "--default-chat-template-kwargs={\"enable_thinking\": true}"
-    replicas: 2
+    replicas: 1
 
 servicemonitor:
   enabled: true
