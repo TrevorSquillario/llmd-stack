@@ -1,3 +1,13 @@
+# =============================================================================
+# NVIDIA Network Operator Standalone Config
+# =============================================================================
+# Summary: Standalone values for deploying only the NVIDIA Network Operator
+# (NVNO) components. Enables Node Feature Discovery (NFD), OFED (Mellanox)
+# driver, and the RDMA shared device plugin. Disables SR-IOV. This file is
+# used independently from the main llmd-stack chart to set up RDMA networking
+# on DGX nodes before deploying model workloads.
+# =============================================================================
+
 nfd:
   enabled: true
 sriovNetworkOperator:

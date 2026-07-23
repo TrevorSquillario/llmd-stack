@@ -1,0 +1,28 @@
+{{- /* =============================================================================
+  Gateway — Istio Gateway resource for external ingress.
+
+  Creates a Gateway resource that HTTPRoute resources can reference as a
+  parentRef. Only rendered when .Values.gateway.enabled is true.
+
+  The Gateway name defaults to "<release-name>-inference-gateway" and can be
+  overridden via .Values.gateway.name.
+  ============================================================================= */}}
+
+{{- if .Values.gateway.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.gateway.name | default (printf "%s-inference-gateway" .Release.Name) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmd-stack.labels" . | nindent 4 }}
+spec:
+  gatewayClassName: {{ .Values.gateway.gatewayClassName }}
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+{{- end }}

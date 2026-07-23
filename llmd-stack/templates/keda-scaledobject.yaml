@@ -1,0 +1,63 @@
+{{- /* =============================================================================
+  KEDA ScaledObject for vLLM models
+  =============================================================================
+  Renders a ScaledObject per model when autoscaling.enabled=true AND
+  autoscaling.keda=true. Uses Prometheus scaler to query vLLM metrics
+  directly from Prometheus, replacing the HPA External metrics approach.
+
+  Prerequisite: KEDA must be installed in the cluster.
+    helm repo add kedacore https://kedacore.github.io/charts
+    helm install keda kedacore/keda --namespace keda --create-namespace
+  ============================================================================= */}}
+
+{{- $prometheusAddress := .Values.vllm.autoscaling.prometheusServerAddress | default "http://kube-prometheus-stack-prometheus.monitoring.svc:9090" }}
+
+{{- range $model := .Values.models }}
+{{- if and $model.enabled $model.autoscaling $model.autoscaling.enabled $model.autoscaling.keda }}
+{{- $isMulti := gt (int $model.nodes) 1 }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}
+  labels:
+    {{- include "llmd-stack.model.labels" $ | nindent 4 }}
+    app.kubernetes.io/model-name: {{ $model.name }}
+    llm-d.ai/model: {{ $model.name }}
+    {{- if $isMulti }}
+    vllm/multi-node: "true"
+    {{- end }}
+    keda.sh/scaler: prometheus
+spec:
+  scaleTargetRef:
+    {{- if $isMulti }}
+    apiVersion: leaderworkerset.x-k8s.io/v1
+    kind: LeaderWorkerSet
+    {{- else }}
+    apiVersion: apps/v1
+    kind: Deployment
+    {{- end }}
+    name: {{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}
+  minReplicaCount: {{ $model.autoscaling.minReplicas }}
+  maxReplicaCount: {{ $model.autoscaling.maxReplicas }}
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ $prometheusAddress | quote }}
+        metricName: vllm_num_requests_waiting
+        query: |
+          sum(vllm:num_requests_waiting{model_name="{{ $model.model }}"})
+        threshold: {{ $model.autoscaling.targetRequestsWaiting | default "5" | quote }}
+        activationThreshold: "0"
+  # -- Fallback to minReplicas if Prometheus is unreachable
+  fallback:
+    failureThreshold: 3
+    replicas: {{ $model.autoscaling.minReplicas }}
+  {{- with $model.autoscaling.behavior }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        {{- toYaml . | nindent 8 }}
+  {{- end }}
+{{- end }}
+{{- end }}

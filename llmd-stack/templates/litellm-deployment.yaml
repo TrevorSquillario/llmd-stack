@@ -6,7 +6,13 @@ metadata:
   labels:
     {{- include "llmd-stack.litellm.labels" . | nindent 4 }}
 spec:
+  revisionHistoryLimit: 5
   replicas: {{ .Values.litellm.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       {{- include "llmd-stack.litellm.labels" . | nindent 6 }}
@@ -22,22 +28,54 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      initContainers:
+        - name: setup-ui
+          image: "{{ .Values.litellm.image.repository }}:{{ .Values.litellm.image.tag }}"
+          command:
+            - sh
+            - -c
+            - |
+              cp -r /app/.venv/lib/python3.13/site-packages/litellm/proxy/_experimental/out/* /app/var/litellm/ui/
+          volumeMounts:
+            - name: ui-volume
+              mountPath: /app/var/litellm/ui
+            - name: assets-volume
+              mountPath: /app/var/litellm/assets
       containers:
         - name: litellm
           image: "{{ .Values.litellm.image.repository }}:{{ .Values.litellm.image.tag }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           args:
             - "--config"
-            - "/etc/litellm/litellm_config.yaml"
+            - "/app/config.yaml"
             - "--port"
             - "{{ .Values.litellm.service.port }}"
             - "--num_workers"
             - "4"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
           ports:
             - name: http
               containerPort: {{ .Values.litellm.service.port }}
               protocol: TCP
           env:
+            - name: LITELLM_NON_ROOT
+              value: "true"
+            - name: LITELLM_UI_PATH
+              value: "/app/var/litellm/ui"
+            - name: LITELLM_ASSETS_PATH
+              value: "/app/var/litellm/assets"
+            - name: LITELLM_MIGRATION_DIR
+              value: "/app/migrations"
+            - name: PRISMA_BINARY_CACHE_DIR
+              value: "/app/cache/prisma-python/binaries"
+            - name: XDG_CACHE_HOME
+              value: "/app/cache"
             - name: LITELLM_MASTER_KEY
               valueFrom:
                 secretKeyRef:
@@ -65,11 +103,31 @@ spec:
             - name: PROMETHEUS_MULTIPROC_DIR # Required then num_workers > 1 for Prometheus metrics collection across workers
               value: "/prometheus_multiproc"
             - name: ENFORCE_PRISMA_MIGRATION_CHECK # Chart startup error fix: The table `public.LiteLLM_UserTable` does not exist in the current database.
-              value: "true"
+              value: "false"
+            #- name: DISABLE_SCHEMA_UPDATE # We're using the Helm PreSync hook for db updates
+            #  value: "true"
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - sh
+                  - -c
+                  - sleep 15
           volumeMounts:
             - name: config
-              mountPath: /etc/litellm
+              mountPath: /app/config.yaml
+              subPath: config.yaml
               readOnly: true
+            - name: ui-volume
+              mountPath: /app/var/litellm/ui
+            - name: assets-volume
+              mountPath: /app/var/litellm/assets
+            - name: cache
+              mountPath: /app/cache
+            - name: migrations
+              mountPath: /app/migrations
+            - name: prometheus-multiproc
+              mountPath: /prometheus_multiproc
           resources:
             {{- toYaml .Values.litellm.resources | nindent 12 }}
           livenessProbe:
@@ -86,10 +144,32 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
+      topologySpreadConstraints:
+        - maxSkew: 1 
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "llmd-stack.litellm.labels" . | nindent 14 }}
+      terminationGracePeriodSeconds: 120
       volumes:
         - name: config
           configMap:
             name: {{ include "llmd-stack.fullname" . }}-litellm
+        - name: prometheus-multiproc
+          emptyDir: {}
+        - name: ui-volume
+          emptyDir:
+            sizeLimit: 100Mi
+        - name: assets-volume
+          emptyDir:
+            sizeLimit: 10Mi
+        - name: cache
+          emptyDir:
+            sizeLimit: 500Mi
+        - name: migrations
+          emptyDir:
+            sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: ServiceAccount

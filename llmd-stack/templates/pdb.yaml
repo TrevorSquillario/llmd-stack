@@ -1,0 +1,39 @@
+{{- /* =============================================================================
+  PodDisruptionBudget — ensures minimum availability during voluntary disruptions
+  (node drains, cluster upgrades, etc.). Only created when replicas > 1.
+  ============================================================================= */}}
+
+{{- if .Values.litellm.enabled }}
+{{- if gt (int .Values.litellm.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-litellm
+  labels:
+    {{- include "llmd-stack.litellm.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ sub (int .Values.litellm.replicas) 1 }}
+  selector:
+    matchLabels:
+      {{- include "llmd-stack.litellm.labels" . | nindent 6 }}
+{{- end }}
+{{- end }}
+
+{{- range $model := .Values.models }}
+{{- if and $model.enabled (not (gt (int $model.nodes) 1)) (gt (int ($model.replicas | default 1)) 1) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}
+  labels:
+    {{- include "llmd-stack.model.labels" $ | nindent 4 }}
+    app.kubernetes.io/model-name: {{ $model.name }}
+spec:
+  minAvailable: {{ sub (int ($model.replicas | default 1)) 1 }}
+  selector:
+    matchLabels:
+      {{- include "llmd-stack.model.labels" $ | nindent 6 }}
+      app.kubernetes.io/model-name: {{ $model.name }}
+{{- end }}
+{{- end }}

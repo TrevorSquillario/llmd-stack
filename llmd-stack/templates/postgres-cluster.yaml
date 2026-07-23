@@ -24,4 +24,8 @@ spec:
       secret:
         name: {{ include "llmd-stack.fullname" . }}-postgres
 
+  # Pod-level resources
+  resources:
+    {{- toYaml .Values.postgres.cluster.resources | nindent 4 }}
+
 {{- end }}

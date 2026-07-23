@@ -1,11 +1,11 @@
 # =============================================================================
-# Multi-Node Gemma 4 with RDMA (DGX GB10)
+# Multi-Node Gemma 4 with RDMA + Autoscaling (DGX GB10)
 # =============================================================================
-# Summary: Multi-node deployment for running google/gemma-4-26B-A4B-it across
-# 2 DGX GB10 nodes with pipeline parallelism (PP=2) and RDMA interconnect.
-# Targets full 262K context length. Enables tool-calling, reasoning parser,
-# and fp8 KV cache. No autoscaling — 1 static replica. Includes NVNO RDMA
-# shared device plugin config. Uses vllm:latest.
+# Summary: Multi-node deployment for google/gemma-4-26B-A4B-it across 2 DGX
+# GB10 nodes with tensor parallelism (TP=2), RDMA interconnect, and KEDA
+# autoscaling (1-2 replicas). Uses enforce-eager and reduced context (8K) to
+# keep VRAM usage low for testing. Enables tool-calling, reasoning parser, and
+# fp8 KV cache. Pins vllm:v0.25.1. Includes NVNO RDMA shared device plugin.
 # =============================================================================
 
 global:
@@ -21,7 +21,7 @@ global:
 vllm:
   image:
     repository: vllm/vllm-openai
-    tag: latest
+    tag: v0.25.1
   extraEnv:
     VLLM_LOGGING_LEVEL: "INFO"
     GLOO_SOCKET_IFNAME: eth0
@@ -46,45 +46,74 @@ vllm:
     # or the Docker root:
     #   /root/.cache/huggingface
     hostPath: /home/trevor/.cache/huggingface
+  autoscaling:
+    # -- Prometheus server address for KEDA Prometheus scaler.
+    # Used when autoscaling.keda=true on individual models.
+    prometheusServerAddress: "http://dev-kube-prometheus-stack-prometheus.llmd-stack.svc:9090"
 
 # =============================================================================
-# Models — Multi-node with RDMA
+# Models — Multi-node with RDMA and autoscaling
 # =============================================================================
 models:
   - name: gemma-4-26b-a4b-it
     port: 8000
     model: google/gemma-4-26B-A4B-it
     nodes: 2
-    tensorParallelSize: 1
-    pipelineParallelSize: 2
-    maxModelLen: 262144
-    gpuMemoryUtilization: 0.5
+    tensorParallelSize: 2
+    pipelineParallelSize: 1
+    maxModelLen: 8192
+    gpuMemoryUtilization: 0.38
     enabled: true
     resources:
       limits:
         cpu: "4"
-        memory: "100Gi"
+        memory: "30Gi"
         nvidia.com/gpu: 1
         rdma/rdma_shared_device_a: "2"
       requests:
         cpu: "2"
-        memory: "70Gi"
+        memory: "28Gi"
         nvidia.com/gpu: 1
         rdma/rdma_shared_device_a: "2"
-    #nodeSelector:
-    #  kubernetes.io/hostname: dgx-spark-1
     affinity: {}
     tolerations: []
     extraEnv: {}
     extraArgs:
       - "--max-num-seqs=4"
+      - "--max-num-batched-tokens=8192"
       - "--enable-auto-tool-choice"
       - "--tool-call-parser=gemma4"
       - "--reasoning-parser=gemma4"
       - "--kv-cache-dtype=fp8"
-      - "--max-num-batched-tokens=16384"
       - "--default-chat-template-kwargs={\"enable_thinking\": true}"
-    replicas: 1
+      - "--enforce-eager" # Used for testing to keep VRAM down
+    replicas: null # Using HPA for autoscaling, so replicas are managed by the HPA controller.
+    # -- KEDA autoscaling — scale between 1-8 replicas based on vLLM metrics
+    autoscaling:
+      enabled: true
+      keda: true # KEDA is preferred over Prometheus Adapter as it is being deprecated in favor of KEDA. With enabled: true and keda: false, you can still use Prometheus Adapter for autoscaling instead of KEDA.
+      minReplicas: 1
+      maxReplicas: 2 # 2 lws per node, 4 vllm instances
+      # Scale out when average queue depth exceeds 5 pending requests
+      # PromQL: sum(vllm:num_requests_waiting{model_name="{{ $model.model }}"})
+      targetRequestsWaiting: "5"
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 30  # Waits 30s to ensure metric spike isn't a temporary blip
+          policies:
+            - type: Pods
+              value: 1                    # Add at most 1 pod at a time
+              periodSeconds: 30           # Every 30 seconds
+            - type: Percent
+              value: 100
+              periodSeconds: 15
+          selectPolicy: Min               # Pick the strictly smaller change to slow down scaling
+        scaleDown:
+          stabilizationWindowSeconds: 300 # Wait 5 mins before scaling down to prevent flapping
+          policies:
+            - type: Percent
+              value: 50
+              periodSeconds: 30 
 
 # =============================================================================
 # NVIDIA Network Operator (NVNO) — RDMA Shared Device Plugin

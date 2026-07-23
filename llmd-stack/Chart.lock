@@ -1,9 +1,6 @@
 dependencies:
-- name: llm-d-infra
-  repository: https://llm-d-incubation.github.io/llm-d-infra/
-  version: v1.4.0
 - name: llm-d-router-standalone
   repository: oci://ghcr.io/llm-d/charts
   version: v0.9.0
-digest: sha256:539848fdb5650b0d7182e91a7ae80feb8b1bc001d105ff87b89985b151d932f1
-generated: "2026-07-17T04:07:44.510821809-06:00"
+digest: sha256:23347df0f0eeb7168040f2a3d9009e311980f9019718e291c7a5bac47880d7d9
+generated: "2026-07-23T06:26:02.444066004-06:00"

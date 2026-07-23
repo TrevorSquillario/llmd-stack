@@ -1,15 +1,34 @@
 {{- if .Values.servicemonitor.enabled }}
+# ServiceMonitor for LiteLLM
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "llmd-stack.fullname" . }}
+  name: {{ include "llmd-stack.fullname" . }}-litellm
   labels:
     {{- include "llmd-stack.labels" . | nindent 4 }}
     release: {{ .Values.servicemonitor.prometheusReleaseName }}
 spec:
   selector:
     matchLabels:
-      {{- include "llmd-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: litellm
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+---
+# ServiceMonitor for vLLM
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-vllm
+  labels:
+    {{- include "llmd-stack.labels" . | nindent 4 }}
+    release: {{ .Values.servicemonitor.prometheusReleaseName }}
+spec:
+  selector:
+    matchExpressions:
+      - key: app.kubernetes.io/model-name
+        operator: Exists
   endpoints:
   - port: http
     path: /metrics

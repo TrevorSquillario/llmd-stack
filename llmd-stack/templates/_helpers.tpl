@@ -1,5 +1,5 @@
 {{- /*
-Developer Copilot — Shared Template Helpers
+Shared Template Helpers
 SPDX-License-Identifier: Apache-2.0
 */}}
 
@@ -127,11 +127,24 @@ Render the model-storage volume mount.
 
 {{- /*
 Set llm-d api base path
+Overridable via .Values.litellm.apiBasePath for custom routing.
 */}}
 {{- define "llmd-stack.apiBasePath" -}}
-{{- if index .Values "llm-d-router-standalone" "router" "enabled" -}}
-{{- printf "http://%s-epp.%s.svc.cluster.local/v1" .Release.Name .Release.Namespace -}}
-{{- else -}}
-{{- printf "http://%s-inference-gateway.%s.svc.cluster.local/v1" .Release.Name .Release.Namespace -}}
+{{- if .Values.litellm.apiBasePath -}}
+{{- .Values.litellm.apiBasePath -}}
+{{- else if index .Values "llm-d-router-standalone" "router" "enabled" -}}
+{{- printf "http://%s-epp.%s.svc.%s/v1" .Release.Name .Release.Namespace .Values.global.clusterDomain -}}
 {{- end -}}
+{{- end -}}
+
+{{- /*
+Build the Postgres DATABASE_URL, resolving the host to a FQDN when the
+Postgres cluster is deployed in a different namespace than the release.
+*/}}
+{{- define "llmd-stack.postgresDatabaseUrl" -}}
+{{- $host := default (printf "%s-litellm-db-cluster-rw" .Release.Name) .Values.postgres.host -}}
+{{- if and (ne .Values.postgres.namespace .Release.Namespace) (not (contains "." $host)) -}}
+{{- $host = printf "%s.%s.svc.%s" $host .Values.postgres.namespace .Values.global.clusterDomain -}}
+{{- end -}}
+{{- printf "postgresql://%s:%s@%s:%v/%s" .Values.postgres.postgresqlUsername .Values.postgres.postgresqlPassword $host .Values.postgres.service.port .Values.postgres.postgresqlDatabase -}}
 {{- end -}}

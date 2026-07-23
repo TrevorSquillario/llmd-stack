@@ -1,0 +1,191 @@
+{{- /* =============================================================================
+  NetworkPolicy — zero-trust network isolation for production deployments.
+  Enabled via .Values.networkPolicy.enabled.
+  ============================================================================= */}}
+
+{{- if .Values.networkPolicy.enabled }}
+
+# ---------------------------------------------------------------------------
+# 1. Default deny all ingress and egress for all pods in this namespace
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-default-deny
+  labels:
+    {{- include "llmd-stack.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# ---------------------------------------------------------------------------
+# 2. Allow DNS egress for all pods (kube-dns / CoreDNS)
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-allow-dns
+  labels:
+    {{- include "llmd-stack.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+---
+# ---------------------------------------------------------------------------
+# 3. Allow ingress to LiteLLM on its service port
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-allow-litellm-ingress
+  labels:
+    {{- include "llmd-stack.litellm.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "llmd-stack.litellm.labels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: {{ .Values.litellm.service.port }}
+
+---
+# ---------------------------------------------------------------------------
+# 4. Allow ingress to vLLM model pods from LiteLLM and inter-pod (NCCL)
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-allow-vllm-ingress
+  labels:
+    {{- include "llmd-stack.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: vllm
+  policyTypes:
+    - Ingress
+  ingress:
+    # LiteLLM proxy → vLLM inference ports
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "llmd-stack.litellm.labels" . | nindent 14 }}
+    # vLLM ↔ vLLM inter-pod (NCCL / distributed communication)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: vllm
+
+---
+# ---------------------------------------------------------------------------
+# 5. Allow egress from LiteLLM to vLLM model pods
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-allow-litellm-egress
+  labels:
+    {{- include "llmd-stack.litellm.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "llmd-stack.litellm.labels" . | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    # LiteLLM → vLLM inference ports
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: vllm
+    {{- if index .Values "llm-d-router-standalone" "router" "enabled" }}
+    # LiteLLM → llm-d standalone router / EPP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: llm-d
+    {{- end }}
+
+{{- if .Values.postgres.enabled }}
+---
+# ---------------------------------------------------------------------------
+# 6. Allow egress from LiteLLM to Postgres (CloudNativePG)
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-allow-postgres-egress
+  labels:
+    {{- include "llmd-stack.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "llmd-stack.litellm.labels" . | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.postgres.namespace }}
+          podSelector:
+            matchLabels:
+              postgresql: cnpg
+      ports:
+        - port: 5432
+{{- end }}
+
+{{- if or (hasKey .Values "keda") (hasKey .Values.vllm "autoscaling") }}
+{{- $kedaEnabled := false }}
+{{- range $model := .Values.models }}
+{{- if and $model.enabled $model.autoscaling $model.autoscaling.enabled $model.autoscaling.keda }}
+{{- $kedaEnabled = true }}
+{{- end }}
+{{- end }}
+{{- if $kedaEnabled }}
+---
+# ---------------------------------------------------------------------------
+# 7. Allow egress from KEDA operator to Prometheus (port 9090)
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-allow-keda-to-prometheus
+  labels:
+    {{- include "llmd-stack.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keda-operator
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 9090
+{{- end }}
+{{- end }}
+
+{{- end }}

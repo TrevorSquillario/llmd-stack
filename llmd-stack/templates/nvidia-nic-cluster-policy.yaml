@@ -1,3 +1,4 @@
+{{- if .Values.nvno.rdmaSharedDevicePlugin.enabled }}
 # Depends on the Nvidia Network Operator
 apiVersion: mellanox.com/v1alpha1
 kind: NicClusterPolicy
@@ -10,18 +11,5 @@ spec:
     repository: ghcr.io/mellanox
     version: v1.5.2
     config: |
-      {
-        "configList": [
-          {
-            "resourceName": "rdma_shared_device_a",
-            "rdmaHcaMax": 63,
-            "selectors": {
-              "vendors": [],
-              "deviceIDs": [],
-              "drivers": [],
-              "ifNames": ["enp1s0f0np0", "enP2p1s0f0np0"],
-              "linkTypes": []
-            }
-          }
-        ]
-      }
+{{ .Values.nvno.rdmaSharedDevicePlugin.config | indent 6 }}
+{{- end }}

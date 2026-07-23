@@ -1,5 +1,6 @@
-{{- range $model := .Values.modelsSingleNode }}
-{{- if $model.enabled }}
+{{- $root := . }}
+{{- range $model := .Values.models }}
+{{- if and $model.enabled (not (gt (int $model.nodes) 1)) }}
 ---
 apiVersion: v1
 kind: Service
@@ -40,7 +41,13 @@ metadata:
     app.kubernetes.io/model-port: {{ $model.port | quote }}
     vllm/tensor-parallel-size: {{ $model.tensorParallelSize | quote }}
 spec:
+  revisionHistoryLimit: 5
   replicas: {{ $model.replicas | default 1 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       {{- include "llmd-stack.model.labels" $ | nindent 6 }}
@@ -78,33 +85,48 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      terminationGracePeriodSeconds: 300
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "llmd-stack.model.labels" $ | nindent 14 }}
+              app.kubernetes.io/model-name: {{ $model.name }}
       hostIPC: true
-      hostPID: true
       volumes:
         - name: dshm
           emptyDir:
             medium: Memory
-            sizeLimit: "16Gi"
+            sizeLimit: {{ $model.dshmSizeLimit | default "16Gi" | quote }}
         {{- include "llmd-stack.modelStorage.volume" $ | nindent 8 }}
       containers:
         - name: vllm
           image: "{{ $.Values.vllm.image.repository }}:{{ $.Values.vllm.image.tag }}"
           imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
-          args:
-            - "--model={{ $model.model }}"
-            - "--disable-access-log-for-endpoints=/health,/metrics,/v1/models"
-            - "--tensor-parallel-size={{ $model.tensorParallelSize }}"
-            - "--pipeline-parallel-size={{ $model.pipelineParallelSize }}"
-            - "--max-model-len={{ $model.maxModelLen }}"
-            - "--gpu-memory-utilization={{ $model.gpuMemoryUtilization }}"
-            - "--port={{ $model.port }}"
-            - "--host=0.0.0.0"
-            - "--trust-remote-code"
+          command:
+            - "sh"
+            - "-c"
+            - >
+              exec vllm serve {{ $model.model }}
+              --disable-access-log-for-endpoints /health,/metrics,/v1/models
+              --tensor-parallel-size {{ $model.tensorParallelSize }}
+              --pipeline-parallel-size {{ $model.pipelineParallelSize }}
+              --max-model-len {{ $model.maxModelLen }}
+              --gpu-memory-utilization {{ $model.gpuMemoryUtilization }}
+              --port {{ $model.port }}
+              --host 0.0.0.0
+              --trust-remote-code
+              --enable-prefix-caching
+              --enable-chunked-prefill
               {{- if $model.dtype }}
-            - "--dtype={{ $model.dtype }}"
+              --dtype {{ $model.dtype }}
               {{- end }}
               {{- if $model.extraArgs }}
-              {{- toYaml $model.extraArgs | nindent 12 }}
+              {{- range $model.extraArgs }}
+              '{{ . }}'
+              {{- end }}
               {{- end }}
           ports:
             - name: http
@@ -112,6 +134,22 @@ spec:
               protocol: TCP
           env:
             {{- include "llmd-stack.model.env" (dict "model" $model "ctx" $) | nindent 12 }}
+            - name: VLLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llmd-stack.fullname" $root }}-litellm
+                  key: master_key
+            - name: PYTORCH_CUDA_ALLOC_CONF
+              value: expandable_segments:True
+            - name: VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS
+              value: "0"
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - sh
+                  - -c
+                  - sleep 30
           volumeMounts:
             - name: dshm
               mountPath: /dev/shm
@@ -122,35 +160,67 @@ spec:
             httpGet:
               path: /health
               port: {{ $model.port }}
-            initialDelaySeconds: 120
-            periodSeconds: 30
-            timeoutSeconds: 10
-            failureThreshold: 6
+            initialDelaySeconds: 0      # Handled completely by startupProbe
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
           readinessProbe:
             httpGet:
               path: /health
               port: {{ $model.port }}
-            initialDelaySeconds: 60
-            periodSeconds: 15
-            timeoutSeconds: 10
-            failureThreshold: 3
+            initialDelaySeconds: 0      # Handled completely by startupProbe
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 2
+
           startupProbe:
             httpGet:
               path: /health
               port: {{ $model.port }}
-            initialDelaySeconds: 30
-            periodSeconds: 10
+            initialDelaySeconds: 15     # Brief wait for Python process / CUDA context init
+            periodSeconds: 10           # Polls every 10s
             timeoutSeconds: 5
-            failureThreshold: 60
+            failureThreshold: 180       # Allows up to 30 minutes for model loading
+
+{{- /* Backwards compatibility for Prometheus Adapter external metrics */}}
+{{- if and $model.autoscaling $model.autoscaling.enabled (not $model.autoscaling.keda) }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}
+  labels:
+    {{- include "llmd-stack.model.labels" $ | nindent 4 }}
+    app.kubernetes.io/model-name: {{ $model.name }}
+    llm-d.ai/model: {{ $model.name }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}
+  minReplicas: {{ $model.autoscaling.minReplicas }}
+  maxReplicas: {{ $model.autoscaling.maxReplicas }}
+  metrics:
+    # vLLM queue depth — scale out when requests pile up
+    - type: External
+      external:
+        metric:
+          name: vllm_num_requests_waiting
+        target:
+          type: AverageValue
+          averageValue: {{ $model.autoscaling.targetRequestsWaiting | default "5" | quote }}
+  {{- with $model.autoscaling.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}
 
 {{- /* Determine if any model is enabled to decide whether to create the PVC */}}
 {{- $anyModelEnabled := false }}
-{{- range .Values.modelsSingleNode }}
-{{- if .enabled }}{{ $anyModelEnabled = true }}{{ end }}
-{{- end }}
-{{- range .Values.modelsMultiNode }}
+{{- range .Values.models }}
 {{- if .enabled }}{{ $anyModelEnabled = true }}{{ end }}
 {{- end }}
 {{- /* Only create PVC when hostPath is not set (hostPath bypasses PVC) */}}

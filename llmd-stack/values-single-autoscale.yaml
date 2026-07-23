@@ -1,0 +1,95 @@
+# =============================================================================
+# Single-Node Load Test with Autoscaling
+# =============================================================================
+# Summary: Single-node deployment for validating HPA/KEDA autoscaling behavior
+# under synthetic load. Runs Qwen2.5-0.5B-Instruct (tiny, fast-loading model)
+# with KEDA ScaledObject scaling between 1-8 replicas based on vLLM request
+# queue depth. No RDMA, no Istio. Uses vllm:latest.
+# =============================================================================
+
+global:
+  clusterDomain: cluster.local
+  registry: docker.io
+  imagePullPolicy: IfNotPresent
+  labels:
+    app.kubernetes.io/part-of: llmd-stack
+
+# =============================================================================
+# vLLM Backend Settings
+# =============================================================================
+vllm:
+  image:
+    repository: vllm/vllm-openai
+    tag: latest
+  extraEnv:
+    VLLM_LOGGING_LEVEL: "INFO"
+  modelStorage:
+    storageClass: ""
+    mountPath: /root/.cache/huggingface
+    # -- Host path for Hugging Face model cache.
+    # Shares the host's ~/.cache/huggingface so models are downloaded once.
+    hostPath: /home/trevor/.cache/huggingface
+  autoscaling:
+    # -- Prometheus server address for KEDA Prometheus scaler.
+    # Used when autoscaling.keda=true on individual models.
+    prometheusServerAddress: "http://dev-kube-prometheus-stack-prometheus.llmd-stack.svc:9090"
+
+# =============================================================================
+# Models — Tiny model for HPA load testing
+# =============================================================================
+models:
+  - name: qwen-2-5-05b-it
+    port: 8000
+    model: Qwen/Qwen2.5-0.5B-Instruct
+    nodes: 1
+    tensorParallelSize: 1
+    pipelineParallelSize: 1
+    maxModelLen: 8192
+    gpuMemoryUtilization: 0.1
+    enabled: true
+    resources:
+      limits:
+        cpu: "4"
+        memory: "8Gi"
+        nvidia.com/gpu: 1
+      requests:
+        cpu: "2"
+        memory: "6Gi"
+        nvidia.com/gpu: 1
+    affinity: {}
+    tolerations: []
+    extraEnv: {}
+    extraArgs:
+      - "--max-num-seqs=4"
+      - "--max-num-batched-tokens=8192"
+      - "--enforce-eager" # Used for testing to keep VRAM down
+    replicas: null # Using HPA for autoscaling, so replicas are managed by the HPA controller.
+    # -- KEDA autoscaling — scale between 1-8 replicas based on vLLM metrics
+    autoscaling:
+      enabled: true
+      keda: true # KEDA is preferred over Prometheus Adapter as it is being deprecated in favor of KEDA. With enabled: true and keda: false, you can still use Prometheus Adapter for autoscaling instead of KEDA.
+      minReplicas: 1
+      maxReplicas: 8
+      # Scale out when average queue depth exceeds 5 pending requests
+      # PromQL: sum(vllm:num_requests_waiting{model_name="{{ $model.model }}"})
+      targetRequestsWaiting: "5"
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 30  # Waits 30s to ensure metric spike isn't a temporary blip
+          policies:
+            - type: Pods
+              value: 1                    # Add at most 1 pod at a time
+              periodSeconds: 30           # Every 30 seconds
+            - type: Percent
+              value: 100
+              periodSeconds: 15
+          selectPolicy: Min               # Pick the strictly smaller change to slow down scaling
+        scaleDown:
+          stabilizationWindowSeconds: 300 # Wait 5 mins before scaling down to prevent flapping
+          policies:
+            - type: Percent
+              value: 50
+              periodSeconds: 30          
+
+servicemonitor:
+  enabled: true

@@ -2,8 +2,9 @@ apiVersion: v2
 name: llmd-stack
 description: A Helm chart for deploying a multi-tenant, multi-model developer architecture for code generation with LiteLLM, llm-d, vLLM backends and open weights models.
 type: application
-version: 1.0.0
+version: 1.0.1
 appVersion: "1.0.0"
+kubeVersion: ">=1.28.0-0"
 icon: https://raw.githubusercontent.com/cncf/artwork/main/projects/llmd/icon/color/llmd-icon-color.svg
 keywords:
   - copilot
@@ -20,9 +21,6 @@ maintainers:
   - name: Trevor Squillario
     email: Trevor.Squillario@Dell.com
 dependencies:
-  - name: llm-d-infra
-    version: "1.4.0"
-    repository: "https://llm-d-incubation.github.io/llm-d-infra/"
   - name: llm-d-router-standalone
     version: "v0.9.0"  
     repository: "oci://ghcr.io/llm-d/charts"

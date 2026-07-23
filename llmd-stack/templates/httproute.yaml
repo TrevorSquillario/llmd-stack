@@ -1,0 +1,34 @@
+{{- /* =============================================================================
+  HTTPRoute — routes external traffic to the LiteLLM service via the Istio
+  Gateway.
+
+  The parentRef targets the Gateway resource named
+  "<release-name>-inference-gateway" by default, overridable via
+  .Values.gateway.name.
+
+  Only rendered when .Values.gateway.enabled is true.
+  ============================================================================= */}}
+
+{{- if and .Values.gateway.enabled .Values.litellm.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-litellm
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmd-stack.litellm.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name | default (printf "%s-inference-gateway" .Release.Name) }}
+      namespace: {{ .Release.Namespace }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: {{ include "llmd-stack.fullname" . }}-litellm
+          port: {{ .Values.litellm.service.port | default 4000 }}
+{{- end }}
