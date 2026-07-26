@@ -103,6 +103,20 @@ helm install istiod istio/istiod -n istio-system \
   --set pilot.env.ENABLE_GATEWAY_API_INFERENCE_EXTENSION="true"
 ```
 
+### Required if you want to use Scale to Zero with the KEDA HTTP AddOn
+```
+helm repo add kedacore https://kedacore.github.io/charts
+helm repo update
+
+# Install CRDs
+helm install keda kedacore/keda --namespace keda --create-namespace
+
+# Install Chart
+helm upgrade --install http-add-on kedacore/keda-add-ons-http \
+  --namespace keda \
+  -f keda-http-helm-values.yaml
+```
+
 ## Install Helm Chart
 ```
 helm upgrade --install test . \

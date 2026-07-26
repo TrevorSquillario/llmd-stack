@@ -1,0 +1,149 @@
+# =============================================================================
+# Single-Node Smoketest with Istio Ingress + KEDA HTTP Interceptor Autoscaling
+# =============================================================================
+# Summary: Single-node deployment combining Istio Gateway for external ingress
+# with KEDA HTTP Add-on interceptor for scale-to-zero autoscaling.
+# Runs Qwen2.5-0.5B-Instruct with KEDA HTTP interceptor managing 0-8 replicas.
+# Disables the llm-d router in favor of Istio-based routing.
+# No RDMA. Useful for testing the Istio ingress + KEDA HTTP scale-to-zero path.
+# =============================================================================
+
+global:
+  clusterDomain: cluster.local
+  registry: docker.io
+  imagePullPolicy: IfNotPresent
+  labels:
+    app.kubernetes.io/part-of: llmd-stack
+
+# =============================================================================
+# vLLM Backend Settings
+# =============================================================================
+vllm:
+  image:
+    repository: vllm/vllm-openai
+    tag: latest
+  extraEnv:
+    VLLM_LOGGING_LEVEL: "INFO"
+  modelStorage:
+    storageClass: ""
+    mountPath: /root/.cache/huggingface
+    # -- Host path for Hugging Face model cache.
+    # Shares the host's ~/.cache/huggingface so models are downloaded once.
+    hostPath: /home/trevor/.cache/huggingface
+  autoscaling:
+    # -- Prometheus server address for KEDA Prometheus scaler.
+    # Used when autoscaling.keda=true on individual models.
+    prometheusServerAddress: "http://dev-kube-prometheus-stack-prometheus.llmd-stack.svc:9090"
+
+# =============================================================================
+# KEDA HTTP Add-on Interceptor — Scale-to-Zero via external-push scaler
+# =============================================================================
+# Prerequisites:
+#   helm repo add kedacore https://kedacore.github.io/charts
+#   helm install keda kedacore/keda --namespace keda --create-namespace
+#   helm install keda-add-ons-http kedacore/keda-add-ons-http \
+#     --namespace keda \
+#     -f keda-http-helm-values.yaml
+# =============================================================================
+kedaHttpInterceptor:
+  # -- Global toggle: when enabled, creates InterceptorRoute + external-push
+  # ScaledObject per model, and reconfigures LiteLLM to route through the
+  # KEDA HTTP interceptor proxy with Host header injection.
+  enabled: true
+  # -- Namespace where KEDA HTTP add-on is installed
+  namespace: keda
+  # -- KEDA HTTP interceptor proxy service name
+  interceptorService: keda-add-ons-http-interceptor
+  # -- KEDA HTTP interceptor proxy port
+  interceptorPort: 8080
+  # -- KEDA HTTP external scaler configuration
+  externalScaler:
+    service: keda-add-ons-http-external-scaler
+    namespace: keda
+    port: 9090
+  # -- Default scaling parameters (overridable per model via model.kedaHttp)
+  scaling:
+    minReplicaCount: 0
+    maxReplicaCount: 4
+    cooldownPeriod: 300
+    targetValue: "5"
+
+# =============================================================================
+# Models — Tiny model for KEDA HTTP scale-to-zero testing
+# =============================================================================
+models:
+  - name: qwen-2-5-05b-it
+    port: 8000
+    model: Qwen/Qwen2.5-0.5B-Instruct
+    nodes: 1
+    tensorParallelSize: 1
+    pipelineParallelSize: 1
+    maxModelLen: 8192
+    gpuMemoryUtilization: 0.1
+    enabled: true
+    resources:
+      limits:
+        cpu: "4"
+        memory: "8Gi"
+        nvidia.com/gpu: 1
+      requests:
+        cpu: "2"
+        memory: "6Gi"
+        nvidia.com/gpu: 1
+    affinity: {}
+    tolerations: []
+    extraEnv: {}
+    extraArgs:
+      - "--max-num-seqs=4"
+      - "--max-num-batched-tokens=8192"
+      - "--enforce-eager" # Used for testing to keep VRAM down
+    replicas: 0 # Managed by KEDA HTTP interceptor (scale-to-zero)
+    # -- KEDA autoscaling — both Prometheus scaler (queue depth) and
+    # external-push scaler (HTTP concurrency via interceptor)
+    autoscaling:
+      enabled: true
+      keda: true
+      minReplicas: 1
+      maxReplicas: 8
+      targetRequestsWaiting: "5"
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 30
+            - type: Percent
+              value: 100
+              periodSeconds: 15
+          selectPolicy: Min
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Percent
+              value: 50
+              periodSeconds: 30
+    # -- Per-model KEDA HTTP interceptor overrides
+    kedaHttp:
+      # -- Host header for InterceptorRoute matching
+      host: qwen-2-5-05b-it.internal
+      # -- Override global scaling defaults for this model
+      minReplicaCount: 0
+      maxReplicaCount: 8
+      cooldownPeriod: 300
+      targetValue: "5"
+
+servicemonitor:
+  enabled: true
+
+llm-d-router-standalone:
+  router:
+    enabled: true
+
+# ============================================================================
+# Gateway — Istio Gateway resource for external ingress
+# ============================================================================
+gateway:
+  name: ""
+  gatewayClassName: "istio"
+  enabled: true

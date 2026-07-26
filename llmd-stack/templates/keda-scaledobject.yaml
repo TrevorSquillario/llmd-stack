@@ -13,7 +13,7 @@
 {{- $prometheusAddress := .Values.vllm.autoscaling.prometheusServerAddress | default "http://kube-prometheus-stack-prometheus.monitoring.svc:9090" }}
 
 {{- range $model := .Values.models }}
-{{- if and $model.enabled $model.autoscaling $model.autoscaling.enabled $model.autoscaling.keda }}
+{{- if and $model.enabled $model.autoscaling $model.autoscaling.enabled $model.autoscaling.keda (not $.Values.kedaHttpInterceptor.enabled) }}
 {{- $isMulti := gt (int $model.nodes) 1 }}
 ---
 apiVersion: keda.sh/v1alpha1

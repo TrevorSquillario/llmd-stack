@@ -93,6 +93,16 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: vllm
+    {{- if .Values.kedaHttpInterceptor.enabled }}
+    # KEDA HTTP interceptor proxy → vLLM inference ports
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.kedaHttpInterceptor.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: keda-add-ons-http-interceptor
+    {{- end }}
 
 ---
 # ---------------------------------------------------------------------------
@@ -122,6 +132,18 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/part-of: llm-d
+    {{- end }}
+    {{- if .Values.kedaHttpInterceptor.enabled }}
+    # LiteLLM → KEDA HTTP interceptor proxy (port 8080)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.kedaHttpInterceptor.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: keda-add-ons-http-interceptor
+      ports:
+        - port: {{ .Values.kedaHttpInterceptor.interceptorPort }}
     {{- end }}
 
 {{- if .Values.postgres.enabled }}

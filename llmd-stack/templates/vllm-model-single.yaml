@@ -42,7 +42,10 @@ metadata:
     vllm/tensor-parallel-size: {{ $model.tensorParallelSize | quote }}
 spec:
   revisionHistoryLimit: 5
-  replicas: {{ $model.replicas | default 1 }}
+  {{- /* Omit replicas when KEDA HTTP interceptor is enabled so it can manage scale-to-zero */}}
+  {{- if not $.Values.kedaHttpInterceptor.enabled }}
+  replicas: {{ $model.replicas }}
+  {{- end }}
   strategy:
     type: RollingUpdate
     rollingUpdate:

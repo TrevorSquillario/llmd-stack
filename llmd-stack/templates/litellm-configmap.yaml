@@ -57,10 +57,19 @@ data:
       {{- range $model := .Values.models }}
       {{- if $model.enabled }}
       {{- $apiBase := include "llmd-stack.apiBasePath" $root }}
+      {{- $interceptorEnabled := $root.Values.kedaHttpInterceptor.enabled }}
       - model_name: {{ $model.model }}
         litellm_params:
           model: openai/{{ $model.model }}
-          {{- if $apiBase }}
+          {{- if $interceptorEnabled }}
+          {{- $interceptorHost := $model.kedaHttp.host | default (printf "%s.internal" $model.name) }}
+          #  Route through KEDA HTTP interceptor proxy for scale-to-zero
+          #  The interceptor forwards to the llm-d router or direct vLLM service
+          #  based on the InterceptorRoute's Host match rule.
+          api_base: http://{{ $root.Values.kedaHttpInterceptor.interceptorService }}.{{ $root.Values.kedaHttpInterceptor.namespace }}.svc.{{ $root.Values.global.clusterDomain }}:{{ $root.Values.kedaHttpInterceptor.interceptorPort }}/v1
+          headers:
+            Host: {{ $interceptorHost | quote }}
+          {{- else if $apiBase }}
           #  Route to the shared llm-d router / EPP service
           api_base: {{ $apiBase }}
           {{- else }}

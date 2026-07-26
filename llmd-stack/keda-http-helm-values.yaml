@@ -1,0 +1,49 @@
+# =============================================================================
+# KEDA HTTP Add-on Helm Values — Interceptor Timeout Configuration
+# =============================================================================
+# This file provides the Helm values snippet for the KEDA HTTP Add-on
+# (kedacore/keda-add-ons-http). Apply it during installation to prevent 502
+# gateway timeouts during vLLM weight loading (which can take several minutes).
+#
+# Usage:
+#   helm install keda-add-ons-http kedacore/keda-add-ons-http \
+#     --namespace keda \
+#     -f keda-http-helm-values.yaml
+#
+# Reference: https://github.com/kedacore/http-add-on
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Interceptor Proxy Configuration
+# ---------------------------------------------------------------------------
+# The interceptor sits between LiteLLM and the vLLM backend. During vLLM
+# weight loading, the backend may not respond for several minutes. These
+# timeout settings prevent the interceptor from returning 502 errors while
+# the model loads.
+# ---------------------------------------------------------------------------
+interceptor:
+  # -- Response header timeout: how long to wait for the backend to send
+  # response headers. Set to 600s (10 min) to accommodate vLLM weight loading.
+  responseHeaderTimeout: 600s
+  timeout:
+    # -- Read timeout: maximum time to wait for the backend to send data.
+    read: 600s
+    # -- Write timeout: maximum time to wait for the backend to accept data.
+    write: 600s
+
+# ---------------------------------------------------------------------------
+# Scaling Configuration
+# ---------------------------------------------------------------------------
+scaling:
+  # -- How often the interceptor reports concurrency metrics to the external
+  # scaler. Lower values = more responsive scaling but more overhead.
+  grpcClientInterval: 500ms
+
+# ---------------------------------------------------------------------------
+# Service Configuration
+# ---------------------------------------------------------------------------
+service:
+  # -- Type of the interceptor proxy service
+  type: ClusterIP
+  # -- Port the interceptor listens on
+  port: 8080

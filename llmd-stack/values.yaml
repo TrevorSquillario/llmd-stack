@@ -142,6 +142,43 @@ vllm:
     prometheusServerAddress: ""
 
 # =============================================================================
+# KEDA HTTP Add-on Interceptor — Scale-to-Zero via external-push scaler
+# =============================================================================
+# When enabled, creates an InterceptorRoute (http.keda.sh/v1beta1) and an
+# external-push ScaledObject per model. LiteLLM is reconfigured to route
+# through the KEDA HTTP interceptor proxy with Host header injection.
+#
+# Prerequisites:
+#   helm repo add kedacore https://kedacore.github.io/charts
+#   helm install keda kedacore/keda --namespace keda --create-namespace
+#   helm install keda-add-ons-http kedacore/keda-add-ons-http \
+#     --namespace keda \
+#     -f keda-http-helm-values.yaml
+# =============================================================================
+kedaHttpInterceptor:
+  # -- Global toggle: when enabled, creates InterceptorRoute + external-push
+  # ScaledObject per model, and reconfigures LiteLLM to route through the
+  # KEDA HTTP interceptor proxy with Host header injection.
+  enabled: false
+  # -- Namespace where KEDA HTTP add-on is installed
+  namespace: keda
+  # -- KEDA HTTP interceptor proxy service name
+  interceptorService: keda-add-ons-http-interceptor
+  # -- KEDA HTTP interceptor proxy port
+  interceptorPort: 8080
+  # -- KEDA HTTP external scaler configuration
+  externalScaler:
+    service: keda-add-ons-http-external-scaler
+    namespace: keda
+    port: 9090
+  # -- Default scaling parameters (overridable per model via model.kedaHttp)
+  scaling:
+    minReplicaCount: 0
+    maxReplicaCount: 4
+    cooldownPeriod: 300
+    targetValue: "5"
+
+# =============================================================================
 # Model Definitions
 # =============================================================================
 # Each model entry supports the following fields:
@@ -156,6 +193,13 @@ vllm:
 #     keda: false              # Use KEDA ScaledObject instead of HPA
 #     targetRequestsWaiting: "5"   # Queue depth threshold
 #     behavior: {}
+#   kedaHttp (optional, only used when kedaHttpInterceptor.enabled=true):
+#     host: ""                 # Host header for InterceptorRoute matching
+#                              # Default: "<model.name>.internal"
+#     targetValue: "5"         # Concurrency target for scaling
+#     minReplicaCount: 0       # Override global kedaHttpInterceptor.scaling
+#     maxReplicaCount: 4
+#     cooldownPeriod: 300
 #
 # Single-node models (nodes: 1) render as a Deployment + ClusterIP Service.
 # Multi-node models (nodes > 1) render as a LeaderWorkerSet + headless
