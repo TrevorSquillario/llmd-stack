@@ -1,0 +1,24 @@
+{{- /* Determine if any model is enabled to decide whether to create the PVC */}}
+{{- $anyModelEnabled := false }}
+{{- range .Values.models }}
+{{- if .enabled }}{{ $anyModelEnabled = true }}{{ end }}
+{{- end }}
+{{- /* Only create PVC when hostPath is not set (hostPath bypasses PVC) */}}
+{{- if and $anyModelEnabled (not .Values.vllm.modelStorage.hostPath) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-model-storage
+  labels:
+    {{- include "llmd-stack.labels" . | nindent 4 }}
+spec:
+  {{- with .Values.vllm.modelStorage.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ .Values.vllm.modelStorage.size }}
+{{- end }}

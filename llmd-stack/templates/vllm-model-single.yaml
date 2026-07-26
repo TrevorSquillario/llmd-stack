@@ -42,8 +42,11 @@ metadata:
     vllm/tensor-parallel-size: {{ $model.tensorParallelSize | quote }}
 spec:
   revisionHistoryLimit: 5
-  {{- /* Omit replicas when KEDA HTTP interceptor is enabled so it can manage scale-to-zero */}}
-  {{- if not $.Values.kedaHttpInterceptor.enabled }}
+  {{- /* Omit replicas when KEDA manages scale-to-zero (minReplicas=0) so
+       the ScaledObject controls the replica count without fighting the
+       Deployment controller. */}}
+  {{- $kedaScaleToZero := and $model.autoscaling $model.autoscaling.enabled $model.autoscaling.keda (eq (int $model.autoscaling.minReplicas) 0) }}
+  {{- if not $kedaScaleToZero }}
   replicas: {{ $model.replicas }}
   {{- end }}
   strategy:
@@ -188,6 +191,7 @@ spec:
 
 {{- /* Backwards compatibility for Prometheus Adapter external metrics */}}
 {{- if and $model.autoscaling $model.autoscaling.enabled (not $model.autoscaling.keda) }}
+{{- $routerEnabled := index $.Values "llm-d-router-standalone" "router" "enabled" | default false }}
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -205,6 +209,26 @@ spec:
   minReplicas: {{ $model.autoscaling.minReplicas }}
   maxReplicas: {{ $model.autoscaling.maxReplicas }}
   metrics:
+    {{- if $routerEnabled }}
+    # -- EPP queue depth (igw_queue_depth): raw total — non-zero means the
+    # pool cannot absorb incoming traffic. Scale out immediately.
+    - type: External
+      external:
+        metric:
+          name: igw_queue_depth
+        target:
+          type: Value
+          value: {{ $model.autoscaling.targetRequestsWaiting | default "5" | quote }}
+    # -- EPP running requests (igw_running_requests): per-pod average —
+    # maintains target concurrency per replica under sustained traffic.
+    - type: External
+      external:
+        metric:
+          name: igw_running_requests
+        target:
+          type: AverageValue
+          averageValue: {{ $model.autoscaling.targetRequestsWaiting | default "5" | quote }}
+    {{- else }}
     # vLLM queue depth — scale out when requests pile up
     - type: External
       external:
@@ -213,35 +237,11 @@ spec:
         target:
           type: AverageValue
           averageValue: {{ $model.autoscaling.targetRequestsWaiting | default "5" | quote }}
+    {{- end }}
   {{- with $model.autoscaling.behavior }}
   behavior:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 {{- end }}
 {{- end }}
-{{- end }}
-
-{{- /* Determine if any model is enabled to decide whether to create the PVC */}}
-{{- $anyModelEnabled := false }}
-{{- range .Values.models }}
-{{- if .enabled }}{{ $anyModelEnabled = true }}{{ end }}
-{{- end }}
-{{- /* Only create PVC when hostPath is not set (hostPath bypasses PVC) */}}
-{{- if and $anyModelEnabled (not .Values.vllm.modelStorage.hostPath) }}
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: {{ include "llmd-stack.fullname" . }}-model-storage
-  labels:
-    {{- include "llmd-stack.labels" . | nindent 4 }}
-spec:
-  {{- with .Values.vllm.modelStorage.storageClass }}
-  storageClassName: {{ . }}
-  {{- end }}
-  accessModes:
-    - ReadOnlyMany
-  resources:
-    requests:
-      storage: {{ .Values.vllm.modelStorage.size }}
 {{- end }}

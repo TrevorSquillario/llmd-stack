@@ -33,4 +33,23 @@ spec:
   - port: http
     path: /metrics
     interval: 30s
+---
+# ServiceMonitor for llm-d EPP (Endpoint Picker + Envoy Proxy)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "llmd-stack.fullname" . }}-epp
+  labels:
+    {{- include "llmd-stack.labels" . | nindent 4 }}
+    release: {{ .Values.servicemonitor.prometheusReleaseName }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Release.Name }}-epp
+  endpoints:
+  - port: http-metrics
+    path: /metrics
+    interval: 10s
+    scheme: http
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
 {{- end }}

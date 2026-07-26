@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2]
+
+### Added
+- **EPP Flow Control support**: New `flow-control-plugins.yaml` EPP config with feature gates, concurrency detector, priority bands (100/0/-10), round-robin fairness, and FCFS ordering policies for request buffering during cold starts.
+- **EPP metric path for KEDA ScaledObject**: ScaledObject now queries `llm_d_epp_flow_control_queue_size` when the llm-d router is enabled, enabling scale-from-zero via EPP Flow Control.
+- **ServiceMonitor for llm-d EPP**: New ServiceMonitor scraping EPP metrics at `/metrics` on a 10s interval with bearer token auth.
+- **Grafana persistence**: Enabled PVC-backed persistence (10Gi) for Grafana dashboards and settings in `prom-g/values.yaml`.
+- **Per-model `eppMetricQuery`**: New config option to override the default EPP Flow Control PromQL query per model.
+- **README**: Added `kubectl logs` by label examples for EPP gateway and vLLM pods.
+
+### Changed
+- **Scale-to-zero mechanism**: Replaced KEDA HTTP Add-on interceptor with llm-d EPP Flow Control for scale-to-zero. The EPP buffers requests during cold starts, eliminating 5xx errors when scaling from 0.
+- **`vllm-model-single.yaml`**: Replicas field is now omitted when `autoscaling.keda=true` AND `minReplicas=0` (instead of when `kedaHttpInterceptor.enabled`), preventing Deployment controller / KEDA replica count conflicts.
+- **`values-single-istio-autoscale.yaml`**: Completely rewritten from KEDA HTTP interceptor architecture to EPP Flow Control architecture with updated documentation, prerequisites, and scaling behavior policies.
+- **`values-multinode-gb10-autoscale.yaml`**: `minReplicas` changed from 1 to 0 for scale-to-zero; `enabled` field reordered.
+- **`values.yaml` defaults**: `llm-d-router-standalone.router.enabled` changed from `false` to `true`; EPP plugins switched from `optimized-baseline-plugins.yaml` to `flow-control-plugins.yaml`; log verbosity reduced from 4 to 2.
+- **`litellm-deployment.yaml`**: `ENFORCE_PRISMA_MIGRATION_CHECK` re-enabled to `"true"`.
+
+### Removed
+- **`kedaHttpInterceptor` section**: Removed from `values.yaml` (global config, per-model `kedaHttp` overrides, and all documentation).
+- **`keda-http-interceptor.yaml` template**: Entire InterceptorRoute + external-push ScaledObject template deleted.
+- **KEDA HTTP interceptor references**: Removed from `litellm-configmap.yaml` (LiteLLM routing through interceptor proxy), `networkpolicy.yaml` (interceptor ingress/egress rules), and `keda-scaledobject.yaml` (interceptor guard condition).
+- **PVC template**: Removed from `vllm-model-single.yaml` (now handled by `model-storage-pvc.yaml`).
+- **`llm-d-router-standalone.router.enabled: false`**: Removed from `values-single-istio.yaml` (now inherits default `true` from `values.yaml`).
+
 ## [1.0.1]
 
 ### Added

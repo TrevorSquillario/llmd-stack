@@ -1,0 +1,37 @@
+{{- if index .Values "llm-d-router-standalone" "router" "enabled" }}
+# =============================================================================
+# RBAC for llm-d EPP metrics scraping
+# The EPP's metrics endpoint uses controller-runtime's
+# WithAuthenticationAndAuthorization filter, which requires the EPP service
+# account to be able to create TokenReviews and SubjectAccessReviews at the
+# cluster scope. Without these permissions, the /metrics endpoint returns 401.
+# =============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-epp-metrics-auth
+  labels:
+    {{- include "llmd-stack.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-epp-metrics-auth
+  labels:
+    {{- include "llmd-stack.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-epp-metrics-auth
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-epp
+    namespace: {{ .Release.Namespace }}
+{{- end }}

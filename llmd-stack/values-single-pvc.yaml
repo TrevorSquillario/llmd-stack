@@ -1,10 +1,15 @@
 # =============================================================================
-# Single-Node Smoketest with Istio Ingress
+# Single-Node Smoketest (1x DGX Spark) — PVC-backed model storage
 # =============================================================================
-# Summary: Single-node deployment with Istio Gateway for external ingress.
-# Runs Qwen2.5-0.5B-Instruct (1 replica, no autoscaling). Disables the
-# llm-d router in favor of Istio-based routing. No RDMA. Useful for testing
-# the Istio ingress path on a single DGX Spark node.
+# Summary: Minimal single-node deployment for basic smoke testing. Runs
+# Qwen2.5-0.5B-Instruct (tiny model, fast to load) with 2 static replicas.
+# No autoscaling, no RDMA, no Istio. Uses vllm:latest. Ideal for validating
+# that the chart deploys correctly on a single DGX Spark node.
+#
+# Differs from values-single.yaml: uses a PersistentVolumeClaim for model
+# storage instead of a hostPath mount. The PVC is created automatically by
+# the model-storage-pvc.yaml template when .Values.vllm.modelStorage.hostPath
+# is omitted and .Values.vllm.modelStorage.size is set.
 # =============================================================================
 
 global:
@@ -13,7 +18,7 @@ global:
   imagePullPolicy: IfNotPresent
   labels:
     app.kubernetes.io/part-of: llmd-stack
-
+  
 # =============================================================================
 # vLLM Backend Settings
 # =============================================================================
@@ -25,15 +30,9 @@ vllm:
     VLLM_LOGGING_LEVEL: "INFO"
   modelStorage:
     storageClass: ""
-    #size: 100Gi
+    size: 100Gi
     mountPath: /root/.cache/huggingface
-    # -- Host path for Hugging Face model cache.
-    # Shares the host's ~/.cache/huggingface so models are downloaded once.
-    # NOTE: Kubernetes does not expand ~ — use the absolute path, e.g.:
-    #   /home/trevor/.cache/huggingface
-    # or the Docker root:
-    #   /root/.cache/huggingface
-    hostPath: /home/trevor/.cache/huggingface
+    # NOTE: hostPath is intentionally omitted so the chart creates a PVC.
 
 # =============================================================================
 # Models — Fit within 128GB Unified Memory per DGX Spark node
@@ -45,8 +44,8 @@ models:
     nodes: 1
     tensorParallelSize: 1
     pipelineParallelSize: 1
-    maxModelLen: 8192
-    gpuMemoryUtilization: 0.09
+    maxModelLen: 512
+    gpuMemoryUtilization: 0.8
     enabled: true
     resources:
       limits:
@@ -61,22 +60,10 @@ models:
     tolerations: []
     extraEnv: {}
     extraArgs:
-      - "--max-num-seqs=2"
+      - "--max-num-seqs=4"
       - "--max-num-batched-tokens=8192"
       - "--enforce-eager" # Used for testing to keep VRAM down
-    replicas: 1
+    replicas: 2
 
 servicemonitor:
   enabled: true
-
-# ============================================================================
-# Gateway — Istio Gateway resource for external ingress
-# ============================================================================
-gateway:
-  # -- Name of the Gateway resource
-  name: ""
-  # -- Gateway class name (e.g. "istio")
-  gatewayClassName: "istio"
-  # -- Whether to create a Gateway resource
-  enabled: true
-

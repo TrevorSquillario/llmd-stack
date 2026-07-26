@@ -142,43 +142,6 @@ vllm:
     prometheusServerAddress: ""
 
 # =============================================================================
-# KEDA HTTP Add-on Interceptor — Scale-to-Zero via external-push scaler
-# =============================================================================
-# When enabled, creates an InterceptorRoute (http.keda.sh/v1beta1) and an
-# external-push ScaledObject per model. LiteLLM is reconfigured to route
-# through the KEDA HTTP interceptor proxy with Host header injection.
-#
-# Prerequisites:
-#   helm repo add kedacore https://kedacore.github.io/charts
-#   helm install keda kedacore/keda --namespace keda --create-namespace
-#   helm install keda-add-ons-http kedacore/keda-add-ons-http \
-#     --namespace keda \
-#     -f keda-http-helm-values.yaml
-# =============================================================================
-kedaHttpInterceptor:
-  # -- Global toggle: when enabled, creates InterceptorRoute + external-push
-  # ScaledObject per model, and reconfigures LiteLLM to route through the
-  # KEDA HTTP interceptor proxy with Host header injection.
-  enabled: false
-  # -- Namespace where KEDA HTTP add-on is installed
-  namespace: keda
-  # -- KEDA HTTP interceptor proxy service name
-  interceptorService: keda-add-ons-http-interceptor
-  # -- KEDA HTTP interceptor proxy port
-  interceptorPort: 8080
-  # -- KEDA HTTP external scaler configuration
-  externalScaler:
-    service: keda-add-ons-http-external-scaler
-    namespace: keda
-    port: 9090
-  # -- Default scaling parameters (overridable per model via model.kedaHttp)
-  scaling:
-    minReplicaCount: 0
-    maxReplicaCount: 4
-    cooldownPeriod: 300
-    targetValue: "5"
-
-# =============================================================================
 # Model Definitions
 # =============================================================================
 # Each model entry supports the following fields:
@@ -192,14 +155,14 @@ kedaHttpInterceptor:
 #     maxReplicas: 5
 #     keda: false              # Use KEDA ScaledObject instead of HPA
 #     targetRequestsWaiting: "5"   # Queue depth threshold
+#     # -- Custom PromQL query for EPP Flow Control queue depth.
+#     # When llm-d-router-standalone.router.enabled=true, the KEDA
+#     # ScaledObject queries llm_d_epp_flow_control_queue_size by default.
+#     # Override this if the metric label differs (e.g. pool name vs model
+#     # name). Example:
+#     #   eppMetricQuery: "sum(llm_d_epp_flow_control_queue_size{pool=\"my-pool\"})"
+#     eppMetricQuery: ""
 #     behavior: {}
-#   kedaHttp (optional, only used when kedaHttpInterceptor.enabled=true):
-#     host: ""                 # Host header for InterceptorRoute matching
-#                              # Default: "<model.name>.internal"
-#     targetValue: "5"         # Concurrency target for scaling
-#     minReplicaCount: 0       # Override global kedaHttpInterceptor.scaling
-#     maxReplicaCount: 4
-#     cooldownPeriod: 300
 #
 # Single-node models (nodes: 1) render as a Deployment + ClusterIP Service.
 # Multi-node models (nodes > 1) render as a LeaderWorkerSet + headless
@@ -273,7 +236,7 @@ postgres:
 # =============================================================================
 llm-d-router-standalone:
   router:
-    enabled: false
+    enabled: true
     extraServicePorts:
       - name: http
         port: 80
@@ -283,17 +246,26 @@ llm-d-router-standalone:
     epp:
       replicas: 1
       flags:
-        v: 4
-      pluginsConfigFile: "optimized-baseline-plugins.yaml"
+        v: 2
+
+      pluginsConfigFile: "flow-control-plugins.yaml"
       pluginsCustomConfig:
-        optimized-baseline-plugins.yaml: |
+        flow-control-plugins.yaml: |
           apiVersion: llm-d.ai/v1alpha1
           kind: EndpointPickerConfig
+          featureGates:
+            - flowControl
           plugins:
           - type: queue-scorer
           - type: kv-cache-utilization-scorer
           - type: prefix-cache-scorer
-          - type: no-hit-lru-scorer
+          - type: round-robin-fairness-policy
+          - type: fcfs-ordering-policy
+          - type: concurrency-detector
+            parameters:
+              maxConcurrency: 132
+              concurrencyMode: requests
+              headroom: 0.0
           schedulingProfiles:
           - name: default
             plugins:
@@ -303,8 +275,25 @@ llm-d-router-standalone:
               weight: 2
             - pluginRef: prefix-cache-scorer
               weight: 3
-            - pluginRef: no-hit-lru-scorer
-              weight: 2
+          flowControl:
+            maxBytes: "10Gi"
+            maxRequests: "1k"
+            defaultRequestTTL: "60s"
+            saturationDetector:
+              pluginRef: concurrency-detector
+            priorityBands:
+            - priority: 100
+              maxRequests: "500"
+              fairnessPolicyRef: round-robin-fairness-policy
+              orderingPolicyRef: fcfs-ordering-policy
+            - priority: 0
+              maxRequests: "200"
+              fairnessPolicyRef: round-robin-fairness-policy
+              orderingPolicyRef: fcfs-ordering-policy
+            - priority: -10
+              maxRequests: "50"
+              fairnessPolicyRef: round-robin-fairness-policy
+              orderingPolicyRef: fcfs-ordering-policy
       resources:
         requests:
           cpu: "4"

@@ -32,3 +32,8 @@ kube-prometheus-stack:
         label: grafana_dashboard
         labelValue: "1"
         searchNamespace: ALL
+    # Persist Grafana data (dashboards, settings, alerts) in a PVC
+    persistence:
+      enabled: true
+      size: 10Gi
+      # storageClassName: ""

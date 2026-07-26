@@ -56,6 +56,7 @@ vllm:
 # =============================================================================
 models:
   - name: gemma-4-26b-a4b-it
+    enabled: true
     port: 8000
     model: google/gemma-4-26B-A4B-it
     nodes: 2
@@ -63,7 +64,6 @@ models:
     pipelineParallelSize: 1
     maxModelLen: 8192
     gpuMemoryUtilization: 0.38
-    enabled: true
     resources:
       limits:
         cpu: "4"
@@ -91,11 +91,12 @@ models:
     # -- KEDA autoscaling — scale between 1-8 replicas based on vLLM metrics
     autoscaling:
       enabled: true
-      keda: true # KEDA is preferred over Prometheus Adapter as it is being deprecated in favor of KEDA. With enabled: true and keda: false, you can still use Prometheus Adapter for autoscaling instead of KEDA.
-      minReplicas: 1
+       # KEDA is preferred over Prometheus Adapter as it is being deprecated in favor of KEDA. With enabled: true and keda: false, you can still use Prometheus Adapter for autoscaling instead of KEDA.
+      keda: true
+      # Scale-to-zero enabled with minReplicas: 0; KEDA ScaledObject managed; Expect long cold start times and a delayed first request. 
+      # Set it to 1 to keep a hot instance running (comsumes VRAM and power)
+      minReplicas: 0
       maxReplicas: 2 # 2 lws per node, 4 vllm instances
-      # Scale out when average queue depth exceeds 5 pending requests
-      # PromQL: sum(vllm:num_requests_waiting{model_name="{{ $model.model }}"})
       targetRequestsWaiting: "5"
       behavior:
         scaleUp:

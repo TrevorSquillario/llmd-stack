@@ -311,6 +311,14 @@ Error: The table `public.LiteLLM_UserTable` does not exist in the current databa
 kubectl delete pod -n llmd-stack test-llmd-stack-litellm-78dbffd9f-ztqkj
 ```
 
+Show logs by label:
+```
+# llm-d epp gateway
+kubectl logs -f -n llmd-stack -l llm-d-router-gateway=test-epp -c epp
+
+# vllm 
+kubectl logs -f -n llmd-stack -l app.kubernetes.io/component=vllm
+```
 
 PostgreSQL database 
 ```

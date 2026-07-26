@@ -2,8 +2,21 @@
   KEDA ScaledObject for vLLM models
   =============================================================================
   Renders a ScaledObject per model when autoscaling.enabled=true AND
-  autoscaling.keda=true. Uses Prometheus scaler to query vLLM metrics
-  directly from Prometheus, replacing the HPA External metrics approach.
+  autoscaling.keda=true. Uses Prometheus scaler to query either:
+
+  1. EPP Flow Control queue depth (llm_d_epp_flow_control_queue_size) —
+     when llm-d-router-standalone.router.enabled=true. This is the
+     recommended path for scale-to-zero: the EPP buffers requests in Flow
+     Control queues during cold starts, and KEDA scales from 0→N based on
+     queue depth.
+
+  2. vLLM request waiting count (vllm:num_requests_waiting) —
+     when the llm-d router is disabled. Direct vLLM metric for standalone
+     deployments without the EPP gateway.
+
+  The metric query is configurable per model via
+  model.autoscaling.eppMetricQuery (for EPP path) or defaults to a
+  sensible query based on the model name.
 
   Prerequisite: KEDA must be installed in the cluster.
     helm repo add kedacore https://kedacore.github.io/charts
@@ -11,10 +24,12 @@
   ============================================================================= */}}
 
 {{- $prometheusAddress := .Values.vllm.autoscaling.prometheusServerAddress | default "http://kube-prometheus-stack-prometheus.monitoring.svc:9090" }}
+{{- $routerEnabled := index .Values "llm-d-router-standalone" "router" "enabled" | default false }}
 
 {{- range $model := .Values.models }}
-{{- if and $model.enabled $model.autoscaling $model.autoscaling.enabled $model.autoscaling.keda (not $.Values.kedaHttpInterceptor.enabled) }}
+{{- if and $model.enabled $model.autoscaling $model.autoscaling.enabled $model.autoscaling.keda }}
 {{- $isMulti := gt (int $model.nodes) 1 }}
+{{- $useEppMetric := $routerEnabled }}
 ---
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
@@ -27,7 +42,11 @@ metadata:
     {{- if $isMulti }}
     vllm/multi-node: "true"
     {{- end }}
+    {{- if $useEppMetric }}
+    keda.sh/scaler: epp-flow-control
+    {{- else }}
     keda.sh/scaler: prometheus
+    {{- end }}
 spec:
   scaleTargetRef:
     {{- if $isMulti }}
@@ -44,9 +63,24 @@ spec:
     - type: prometheus
       metadata:
         serverAddress: {{ $prometheusAddress | quote }}
+        {{- if $useEppMetric }}
+        # -- EPP Flow Control queue depth: non-zero means requests are
+        # buffered at the gateway because no replica can accept them.
+        # This is the authoritative signal for scale-from-zero.
+        metricName: epp_flow_control_queue_size
+        query: |
+          {{- if $model.autoscaling.eppMetricQuery }}
+          {{ $model.autoscaling.eppMetricQuery }}
+          {{- else }}
+          sum(llm_d_epp_flow_control_queue_size{model_name="{{ $model.model }}"})
+          {{- end }}
+        {{- else }}
+        # -- vLLM request waiting count: direct model-server metric for
+        # standalone deployments without the llm-d router/EPP gateway.
         metricName: vllm_num_requests_waiting
         query: |
           sum(vllm:num_requests_waiting{model_name="{{ $model.model }}"})
+        {{- end }}
         threshold: {{ $model.autoscaling.targetRequestsWaiting | default "5" | quote }}
         activationThreshold: "0"
   # -- Fallback to minReplicas if Prometheus is unreachable
