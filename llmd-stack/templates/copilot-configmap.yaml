@@ -10,7 +10,7 @@ data:
   copilot.json: |
     [
       {
-        "name": "vLLM",
+        "name": "LiteLLM",
         "vendor": "customendpoint",
         "apiType": "chat-completions",
         "models": [
@@ -21,7 +21,11 @@ data:
           {
             "id": "{{ $model.model }}",
             "name": "{{ $model.model }}",
+{{- if $.Values.global.externalUrl }}
+            "url": "{{ $.Values.global.externalUrl }}/v1",
+{{- else }}
             "url": "http://{{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}{{ if gt (int $model.nodes) 1 }}-svc{{ end }}:{{ $model.port }}/v1",
+{{- end }}
             "toolCalling": true,
             "vision": false,
             "maxInputTokens": {{ default 65536 $model.maxModelLen }},

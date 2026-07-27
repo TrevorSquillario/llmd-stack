@@ -19,6 +19,10 @@ global:
   # -- Common labels applied to all resources
   labels:
     app.kubernetes.io/part-of: llmd-stack
+  # -- External URL for the model endpoint. When set, the copilot ConfigMap will
+  # use this as the model endpoint base URL (https://<externalUrl>/v1)
+  # instead of the internal cluster service URLs.
+  externalUrl: ""
 
 # =============================================================================
 # LiteLLM Proxy Settings
@@ -32,7 +36,7 @@ litellm:
   service:
     type: NodePort
     port: 4000
-    nodePort: 32000 # Must be between 30000-32767
+    nodePort: 32020 # Must be between 30000-32767
   resources:
     limits:
       cpu: "4"
@@ -149,12 +153,20 @@ vllm:
 #   maxModelLen, gpuMemoryUtilization, enabled, replicas, resources,
 #   nodeSelector, affinity, tolerations, extraEnv, extraArgs, dtype,
 #   dshmSizeLimit (default: "16Gi" for single-node, "32Gi" for multi-node),
+#   image (optional): { repository, tag } — overrides the global vllm.image
+#     for this specific model. Either field can be omitted to inherit the
+#     global default.
 #   autoscaling (optional):
 #     enabled: false
 #     minReplicas: 1
 #     maxReplicas: 5
 #     keda: false              # Use KEDA ScaledObject instead of HPA
 #     targetRequestsWaiting: "5"   # Queue depth threshold
+#     # -- How often (seconds) KEDA polls Prometheus for the queue metric.
+#     pollingInterval: 15
+#     # -- How long (seconds) KEDA waits with zero queue before scaling
+#     # the last replica down to zero. Default 3600 (1 hour).
+#     cooldownPeriod: 3600
 #     # -- Custom PromQL query for EPP Flow Control queue depth.
 #     # When llm-d-router-standalone.router.enabled=true, the KEDA
 #     # ScaledObject queries llm_d_epp_flow_control_queue_size by default.

@@ -109,7 +109,7 @@ spec:
         {{- include "llmd-stack.modelStorage.volume" $ | nindent 8 }}
       containers:
         - name: vllm
-          image: "{{ $.Values.vllm.image.repository }}:{{ $.Values.vllm.image.tag }}"
+          image: "{{ include "llmd-stack.model.image" (dict "model" $model "ctx" $) }}"
           imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
           command:
             - "sh"
@@ -138,6 +138,9 @@ spec:
             - name: http
               containerPort: {{ $model.port }}
               protocol: TCP
+          securityContext:
+              capabilities:
+                add: ["IPC_LOCK"]
           env:
             {{- include "llmd-stack.model.env" (dict "model" $model "ctx" $) | nindent 12 }}
             - name: VLLM_API_KEY

@@ -1,4 +1,5 @@
 artifacts/
+docker/
 .git/
 .gitignore
 ci/

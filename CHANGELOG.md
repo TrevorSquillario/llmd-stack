@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3]
+
+### Added
+- **Per-model image override**: New `llmd-stack.model.image` helper template and `model.image.{repository,tag}` config fields, allowing per-model container image overrides while inheriting global defaults.
+- **`global.externalUrl`**: New config option for the copilot ConfigMap to use an external endpoint URL instead of internal cluster service URLs.
+- **KEDA `cooldownPeriod` and `pollingInterval`**: New configurable autoscaling fields in `values.yaml` and `keda-scaledobject.yaml` for fine-tuning scale-to-zero behavior (defaults: 3600s cooldown, 15s polling).
+- **`IPC_LOCK` capability**: Added to single-node vLLM container security context for improved memory locking.
+- **`--distributed-executor-backend mp`**: Added to multi-node vLLM args for multiprocessing distributed executor backend.
+- **`values-local*` to `.gitignore`**: Prevents local values files from being committed.
+- **`docker/` to `.helmignore`**: Excludes the docker build directory from Helm packaging.
+
+### Changed
+- **LiteLLM nodePort**: Changed from `32000` to `32020` in `values.yaml` and all documentation.
+- **Copilot ConfigMap name**: Changed from `"vLLM"` to `"LiteLLM"` to reflect the correct endpoint.
+- **`_helpers.tpl`**: `model.env` helper now supports map-type values in `extraEnv` (previously only string values).
+- **Probe `initialDelaySeconds`**: Increased from 15 to 60 for multi-node vLLM containers to allow more time for CUDA context initialization.
+- **README.md**: Major restructuring — reorganized section headings, updated LiteLLM port references, added sections for k8s container registry setup, cold start optimization (instanttensor), DGX Spark/GB10 specific builds, and improved troubleshooting docs.
+
+### Fixed
+- **`model.env` helper**: Now correctly renders map-type `extraEnv` values (e.g., `valueFrom` / `configMapKeyRef`) instead of forcing them to strings.
+
 ## [1.0.2]
 
 ### Added
@@ -53,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Unified model definitions**: Merged `modelsSingleNode` and `modelsMultiNode` into a single `models` list. The `nodes` field determines single-node (Deployment) vs multi-node (LeaderWorkerSet) rendering.
 - **LiteLLM image**: Updated from `docker.litellm.ai/berriai/litellm:latest` to `ghcr.io/berriai/litellm:v1.92.1`.
-- **LiteLLM service type**: Changed from `ClusterIP` to `NodePort` with explicit `nodePort: 32000`.
+- **LiteLLM service type**: Changed from `ClusterIP` to `NodePort` with explicit `nodePort: 32020`.
 - **LiteLLM resources**: Increased limits to 4 CPU / 12Gi memory and requests to 2 CPU / 10Gi memory.
 - **LiteLLM config mount**: Changed from `/etc/litellm` to `/app/config.yaml` (subPath).
 - **LiteLLM migration check**: `ENFORCE_PRISMA_MIGRATION_CHECK` set to `"false"` (was `"true"`).

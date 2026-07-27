@@ -2,7 +2,7 @@ apiVersion: v2
 name: llmd-stack
 description: A Helm chart for deploying a multi-tenant, multi-model developer architecture for code generation with LiteLLM, llm-d, vLLM backends and open weights models.
 type: application
-version: 1.0.2
+version: 1.0.3
 appVersion: "1.0.0"
 kubeVersion: ">=1.28.0-0"
 icon: https://raw.githubusercontent.com/cncf/artwork/main/projects/llmd/icon/color/llmd-icon-color.svg

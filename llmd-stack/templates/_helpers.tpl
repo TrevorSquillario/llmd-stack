@@ -95,11 +95,27 @@ Takes a dict with "model" (the model config) and "ctx" (the root context).
   value: {{ .model.port | quote }}
 {{- range $key, $value := .model.extraEnv }}
 - name: {{ $key }}
+{{- if kindIs "map" $value }}
+  {{- toYaml $value | nindent 2 }}
+{{- else }}
   value: {{ $value | quote }}
+{{- end }}
 {{- end }}
 {{- end }}
 
 {{- /* vLLM args removed — templates now render args inline to accept explicit values */}}
+
+{{- /*
+Resolve the container image for a model.
+Supports per-model image override via $model.image.repository and $model.image.tag.
+Either field can be omitted to inherit the global default.
+Usage: {{ include "llmd-stack.model.image" (dict "model" $model "ctx" $) }}
+*/}}
+{{- define "llmd-stack.model.image" -}}
+{{- $repo := dig "image" "repository" .ctx.Values.vllm.image.repository .model -}}
+{{- $tag  := dig "image" "tag"        .ctx.Values.vllm.image.tag        .model -}}
+{{- printf "%s:%s" $repo $tag -}}
+{{- end }}
 
 {{- /*
 Render the model-storage volume definition.

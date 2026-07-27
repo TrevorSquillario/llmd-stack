@@ -59,6 +59,9 @@ spec:
     name: {{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}
   minReplicaCount: {{ $model.autoscaling.minReplicas }}
   maxReplicaCount: {{ $model.autoscaling.maxReplicas }}
+  # KEDA scale-to-zero delay (1 -> 0)
+  cooldownPeriod: {{ $model.autoscaling.cooldownPeriod | default 3600 }} # KEDA will wait 1 hour of 0-queue activity before terminating the last pod
+  pollingInterval: {{ $model.autoscaling.pollingInterval | default 15 }} # How often KEDA checks the queue metric
   triggers:
     - type: prometheus
       metadata:

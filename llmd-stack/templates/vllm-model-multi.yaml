@@ -127,7 +127,7 @@ spec:
           {{- include "llmd-stack.modelStorage.volume" $ | nindent 10 }}
         containers:
           - name: vllm
-            image: "{{ $.Values.vllm.image.repository }}:{{ $.Values.vllm.image.tag }}"
+            image: "{{ include "llmd-stack.model.image" (dict "model" $model "ctx" $) }}"
             imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
             command:
               - "sh"
@@ -147,6 +147,7 @@ spec:
                 --nnodes $(LWS_GROUP_SIZE)
                 --node-rank $(LWS_WORKER_INDEX)
                 --master-addr $(LWS_LEADER_ADDRESS).svc.cluster.local
+                --distributed-executor-backend mp
                 {{- if $model.dtype }}
                 --dtype {{ $model.dtype }}
                 {{- end }}
@@ -214,7 +215,7 @@ spec:
               httpGet:
                 path: /health
                 port: {{ $model.port }}
-              initialDelaySeconds: 15     # Brief wait for Python process / CUDA context init
+              initialDelaySeconds: 60     # Brief wait for Python process / CUDA context init
               periodSeconds: 10           # Polls every 10s
               timeoutSeconds: 5
               failureThreshold: 180       # Allows up to 30 minutes for model loading
@@ -264,7 +265,7 @@ spec:
           {{- include "llmd-stack.modelStorage.volume" $ | nindent 10 }}
         containers:
           - name: vllm
-            image: "{{ $.Values.vllm.image.repository }}:{{ $.Values.vllm.image.tag }}"
+            image: "{{ include "llmd-stack.model.image" (dict "model" $model "ctx" $) }}"
             imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
             command:
               - "sh"
@@ -284,6 +285,7 @@ spec:
                 --nnodes $(LWS_GROUP_SIZE)
                 --node-rank $(LWS_WORKER_INDEX)
                 --master-addr $(LWS_LEADER_ADDRESS).svc.cluster.local
+                --distributed-executor-backend mp
                 --headless
                 {{- if $model.dtype }}
                 --dtype {{ $model.dtype }}
@@ -336,7 +338,7 @@ spec:
               exec:
                 command:
                   - nvidia-smi
-              initialDelaySeconds: 15
+              initialDelaySeconds: 60
               periodSeconds: 10
               timeoutSeconds: 5
               failureThreshold: 180      # Allows up to 30 minutes for model loading
