@@ -23,6 +23,36 @@ global:
   # use this as the model endpoint base URL (https://<externalUrl>/v1)
   # instead of the internal cluster service URLs.
   externalUrl: ""
+  # -- Default request TTL (seconds) for the entire inference stack.
+  # Drives the EPP Flow Control queue TTL, LiteLLM global request_timeout,
+  # and LiteLLM per-model timeout. Increase for cold-start / scale-from-zero
+  # scenarios where model loading takes longer than 60s.
+  defaultRequestTTL: 600
+  # -- Global autoscaling defaults (can be overridden per model)
+  autoscaling:
+    # -- Prometheus server address for KEDA Prometheus scaler.
+    # Used when autoscaling.keda=true on individual models.
+    # Default: kube-prometheus-stack-prometheus.monitoring.svc:9090
+    prometheusServerAddress: "http://dev-kube-prometheus-stack-prometheus.llmd-stack.svc:9090"
+    # -- Default HPA behavior for all models.
+    # Individual models can override by setting model.autoscaling.behavior.
+    defaultBehavior:
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 15
+          - type: Percent
+            value: 100
+            periodSeconds: 1
+        selectPolicy: Min
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Percent
+            value: 50
+            periodSeconds: 30
 
 # =============================================================================
 # LiteLLM Proxy Settings
@@ -138,12 +168,26 @@ vllm:
     # Hugging Face cache so models don't need to be re-downloaded per pod.
     # Use an absolute path — Kubernetes does not expand ~.
     hostPath: ""
-  # -- Global autoscaling defaults (can be overridden per model)
-  autoscaling:
-    # -- Prometheus server address for KEDA Prometheus scaler.
-    # Used when autoscaling.keda=true on individual models.
-    # Default: kube-prometheus-stack-prometheus.monitoring.svc:9090
-    prometheusServerAddress: ""
+    # -- Mount the model storage volume as read-only.
+    # When true, the volume is mounted read-only. Only use this if models
+    # are pre-downloaded — vLLM will not be able to download models at startup.
+    readOnly: false
+  # -- Cache storage for AOT compilation artifacts (Triton, Inductor, FlashInfer).
+  # When hostPath is set, mounts a hostPath volume at mountPath (default: /cache).
+  # Set hostPath to "" (or omit) to disable. Example:
+  #   cacheStorage:
+  #     hostPath: /home/trevor/.cache/vllm
+  #     mountPath: /cache
+  cacheStorage:
+    # -- Host path for AOT compilation artifacts (Triton, Inductor, FlashInfer).
+    # When set, mounts a hostPath volume at mountPath.
+    hostPath: ""
+    # -- Mount path for cache storage inside the container.
+    mountPath: /cache
+    # -- Mount the cache volume as read-only.
+    # When true, the volume is mounted read-only. Only use this if caches
+    # are pre-compiled — vLLM will not be able to write artifacts at startup.
+    readOnly: false
 
 # =============================================================================
 # Model Definitions
@@ -176,6 +220,12 @@ vllm:
 #     eppMetricQuery: ""
 #     behavior: {}
 #
+#   The ScaledObject includes a second Prometheus trigger that queries
+#   vllm:num_requests_running with threshold "1". This keeps the pod alive
+#   while it is actively serving a request — the EPP queue depth drops to 0
+#   as soon as a pod starts, but the running-requests trigger prevents the
+#   cooldown timer from starting until the request completes.
+#
 # Single-node models (nodes: 1) render as a Deployment + ClusterIP Service.
 # Multi-node models (nodes > 1) render as a LeaderWorkerSet + headless
 # Service + client-facing Service. The templates branch on the `nodes` field.
@@ -193,10 +243,12 @@ nvno:
 # Monitoring Settings
 # =============================================================================
 servicemonitor:
-  enabled: false
+  enabled: true
   # -- Prometheus release name used in the ServiceMonitor's release label
   prometheusReleaseName: dev-kube-prometheus-stack
   namespace: llmd-stack
+  # -- Scrape interval for Prometheus metrics
+  scrapeInterval: 10s
 
 # =============================================================================
 # NetworkPolicy — zero-trust network isolation
@@ -260,52 +312,21 @@ llm-d-router-standalone:
       flags:
         v: 2
 
-      pluginsConfigFile: "flow-control-plugins.yaml"
-      pluginsCustomConfig:
-        flow-control-plugins.yaml: |
-          apiVersion: llm-d.ai/v1alpha1
-          kind: EndpointPickerConfig
-          featureGates:
-            - flowControl
-          plugins:
-          - type: queue-scorer
-          - type: kv-cache-utilization-scorer
-          - type: prefix-cache-scorer
-          - type: round-robin-fairness-policy
-          - type: fcfs-ordering-policy
-          - type: concurrency-detector
-            parameters:
-              maxConcurrency: 132
-              concurrencyMode: requests
-              headroom: 0.0
-          schedulingProfiles:
-          - name: default
-            plugins:
-            - pluginRef: queue-scorer
-              weight: 2
-            - pluginRef: kv-cache-utilization-scorer
-              weight: 2
-            - pluginRef: prefix-cache-scorer
-              weight: 3
-          flowControl:
-            maxBytes: "10Gi"
-            maxRequests: "1k"
-            defaultRequestTTL: "60s"
-            saturationDetector:
-              pluginRef: concurrency-detector
-            priorityBands:
-            - priority: 100
-              maxRequests: "500"
-              fairnessPolicyRef: round-robin-fairness-policy
-              orderingPolicyRef: fcfs-ordering-policy
-            - priority: 0
-              maxRequests: "200"
-              fairnessPolicyRef: round-robin-fairness-policy
-              orderingPolicyRef: fcfs-ordering-policy
-            - priority: -10
-              maxRequests: "50"
-              fairnessPolicyRef: round-robin-fairness-policy
-              orderingPolicyRef: fcfs-ordering-policy
+      pluginsConfigFile: "../config-custom/flow-control-plugins.yaml"
+      # pluginsCustomConfig is intentionally omitted — the flow-control plugins
+      # config is rendered as a separate ConfigMap (epp-flow-control-configmap.yaml)
+      # so Helm templates (e.g. global.defaultRequestTTL) are expanded.
+      # Mounted at /config-custom (not /config, which is already a mount point
+      # from the sub-chart's default plugins-config-volume). The pluginsConfigFile
+      # uses ../config-custom/ to traverse from /config/ to /config-custom/.
+      volumes:
+        - name: flow-control-plugins
+          configMap:
+            name: epp-flow-control-plugins
+      volumeMounts:
+        - name: flow-control-plugins
+          mountPath: /config-custom
+          readOnly: true
       resources:
         requests:
           cpu: "4"

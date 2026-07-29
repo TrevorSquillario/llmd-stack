@@ -66,9 +66,6 @@ models:
       - "--enforce-eager" # Used for testing to keep VRAM down
     replicas: 1
 
-servicemonitor:
-  enabled: true
-
 # ============================================================================
 # Gateway — Istio Gateway resource for external ingress
 # ============================================================================

@@ -42,11 +42,11 @@ metadata:
     vllm/tensor-parallel-size: {{ $model.tensorParallelSize | quote }}
 spec:
   revisionHistoryLimit: 5
-  {{- /* Omit replicas when KEDA manages scale-to-zero (minReplicas=0) so
-       the ScaledObject controls the replica count without fighting the
-       Deployment controller. */}}
-  {{- $kedaScaleToZero := and $model.autoscaling $model.autoscaling.enabled $model.autoscaling.keda (eq (int $model.autoscaling.minReplicas) 0) }}
-  {{- if not $kedaScaleToZero }}
+  {{- if and $model.autoscaling.enabled $model.autoscaling.keda }}
+  # KEDA ScaledObject owns .spec.replicas — omit to avoid field manager conflict
+  {{- else if $model.autoscaling.enabled }}
+  replicas: {{ $model.autoscaling.minReplicas }}
+  {{- else }}
   replicas: {{ $model.replicas }}
   {{- end }}
   strategy:
@@ -91,7 +91,7 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      terminationGracePeriodSeconds: 300
+      terminationGracePeriodSeconds: 30
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
@@ -107,6 +107,7 @@ spec:
             medium: Memory
             sizeLimit: {{ $model.dshmSizeLimit | default "16Gi" | quote }}
         {{- include "llmd-stack.modelStorage.volume" $ | nindent 8 }}
+        {{- include "llmd-stack.cacheStorage.volume" $ | nindent 8 }}
       containers:
         - name: vllm
           image: "{{ include "llmd-stack.model.image" (dict "model" $model "ctx" $) }}"
@@ -163,6 +164,7 @@ spec:
             - name: dshm
               mountPath: /dev/shm
             {{- include "llmd-stack.modelStorage.volumeMount" $ | nindent 12 }}
+            {{- include "llmd-stack.cacheStorage.volumeMount" $ | nindent 12 }}
           resources:
             {{- toYaml $model.resources | nindent 12 }}
           livenessProbe:
@@ -241,7 +243,8 @@ spec:
           type: AverageValue
           averageValue: {{ $model.autoscaling.targetRequestsWaiting | default "5" | quote }}
     {{- end }}
-  {{- with $model.autoscaling.behavior }}
+  {{- $behavior := $model.autoscaling.behavior | default $.Values.global.autoscaling.defaultBehavior }}
+  {{- with $behavior }}
   behavior:
     {{- toYaml . | nindent 4 }}
   {{- end }}

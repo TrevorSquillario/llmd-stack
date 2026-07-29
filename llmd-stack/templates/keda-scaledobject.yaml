@@ -23,7 +23,7 @@
     helm install keda kedacore/keda --namespace keda --create-namespace
   ============================================================================= */}}
 
-{{- $prometheusAddress := .Values.vllm.autoscaling.prometheusServerAddress | default "http://kube-prometheus-stack-prometheus.monitoring.svc:9090" }}
+{{- $prometheusAddress := .Values.global.autoscaling.prometheusServerAddress | default "http://kube-prometheus-stack-prometheus.monitoring.svc:9090" }}
 {{- $routerEnabled := index .Values "llm-d-router-standalone" "router" "enabled" | default false }}
 
 {{- range $model := .Values.models }}
@@ -86,11 +86,25 @@ spec:
         {{- end }}
         threshold: {{ $model.autoscaling.targetRequestsWaiting | default "5" | quote }}
         activationThreshold: "0"
+    # -- vLLM requests currently being processed: non-zero means the model
+    # is actively serving a request. This prevents KEDA's cooldown timer
+    # from starting while requests are in flight — the EPP queue depth
+    # drops to 0 as soon as a pod starts serving, but this trigger keeps
+    # the pod alive until the request completes.
+    - type: prometheus
+      metadata:
+        serverAddress: {{ $prometheusAddress | quote }}
+        metricName: vllm_num_requests_running
+        query: |
+          sum(vllm:num_requests_running{model_name="{{ $model.model }}"})
+        threshold: "1"
+        activationThreshold: "0"
   # -- Fallback to minReplicas if Prometheus is unreachable
   fallback:
     failureThreshold: 3
     replicas: {{ $model.autoscaling.minReplicas }}
-  {{- with $model.autoscaling.behavior }}
+  {{- $behavior := $model.autoscaling.behavior | default $.Values.global.autoscaling.defaultBehavior }}
+  {{- with $behavior }}
   advanced:
     horizontalPodAutoscalerConfig:
       behavior:

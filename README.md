@@ -1,6 +1,6 @@
 # LLMD-Stack
 
-The goal is to deploy a Helm chart for a multi-tenant, multi-model developer architecture for code generation with LiteLLM, llm-d, vLLM backends and open weights models.
+The goal is to deploy a Helm chart for a multi-tenant, multi-model developer architecture for code generation with LiteLLM, llm-d, vLLM backends and open weights models. Designed to scale from a dual dgx spark (gb10) cluster to a multi-rack deployment. 
 
 ---
 
@@ -316,6 +316,11 @@ kubectl logs -f -n llmd-stack -l llm-d-router-gateway=test-epp -c epp
 kubectl logs -f -n llmd-stack -l app.kubernetes.io/component=vllm
 ```
 
+Show events for object:
+```
+kubectl events -n llmd-stack --for ScaledObject/test-llmd-stack-model-deepseek-v4-flash-dspark
+```
+
 PostgreSQL database 
 ```
 kubectl exec -ti -c postgres test-litellm-db-cluster-1 -n llmd-stack -- psql -c '\du'
@@ -367,6 +372,14 @@ Then add this to your `models` values
     image:
       repository: localhost:32000/vllm
       tag: instanttensors
+```
+
+Startup Time (From 0 to 1 vllm instance time to first chat response)
+```
+python docker/startup_timer.py --host 192.168.0.30 --port 32020 --model deepseek-ai/DeepSeek-V4-Flash-DSpark         --prompt "Say 'hello world'" --timeout 3600
+
+InstantTensor Only: 321.10s (5.35m)
+InstantTensor + PreCached Triton/CUDA kernels: 186.19s (3.10m)
 ```
 
 # DGX Spark / GB10 Specific

@@ -66,6 +66,3 @@ models:
       - "--enforce-eager" # Used for testing to keep VRAM down
     replicas: 2
 
-servicemonitor:
-  enabled: true
-

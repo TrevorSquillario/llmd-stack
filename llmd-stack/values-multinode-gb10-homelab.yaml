@@ -1,0 +1,321 @@
+# =============================================================================
+# Multi-Node Homelab Deployment (GB10 Cluster)
+# =============================================================================
+# Summary: Multi-node homelab deployment targeting a 2-node GB10 cluster with
+# RDMA (NVIDIA NIC cluster policy / shared device plugin), KEDA scale-from-zero
+# autoscaling (minReplicas: 0, maxReplicas: 1 per model), and Istio gateway.
+# Runs four models: Gemma 4 26B A4B IT (instanttensor, TP=1), DeepSeek-V4-
+# Flash-DSpark (instanttensor, TP=2, 2 nodes, speculative decoding), Qwen3.6-
+# 35B-A3B (TP=1), and Qwen3.6-27B (TP=1). Uses custom images from
+# localhost:32000 registry with hostPath volume sharing for HF cache and
+# vLLM compilation artifacts.
+# =============================================================================
+
+global:
+  clusterDomain: cluster.local
+  registry: docker.io
+  imagePullPolicy: IfNotPresent
+  labels:
+    app.kubernetes.io/part-of: llmd-stack
+  externalUrl: "http://192.168.0.240" 
+  # -- Extended request TTL for cold-start / scale-from-zero scenarios.
+  # DeepSeek-V4-Flash-DSpark takes >60s to load; 1800s (30 min) gives
+  # enough headroom for model loading + first inference.
+  defaultRequestTTL: 1800
+  autoscaling:
+    # -- Prometheus server address for KEDA Prometheus scaler.
+    # Used when autoscaling.keda=true on individual models.
+    prometheusServerAddress: "http://dev-kube-prometheus-stack-prometheus.llmd-stack.svc:9090"
+    # -- Default HPA behavior shared by all models.
+    # Individual models can override by setting model.autoscaling.behavior.
+    defaultBehavior:
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 1
+          - type: Percent
+            value: 100
+            periodSeconds: 1
+        selectPolicy: Min
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Percent
+            value: 50
+            periodSeconds: 30
+
+# =============================================================================
+# vLLM Backend Settings
+# =============================================================================
+vllm:
+  extraEnv:
+    VLLM_LOGGING_LEVEL: "INFO"
+    GLOO_SOCKET_IFNAME: eth0
+    NCCL_SOCKET_IFNAME: eth0
+    UCX_NET_DEVICES: eth0
+    OMPI_MCA_btl_tcp_if_include: eth0
+    TP_SOCKET_IFNAME: eth0
+    NCCL_IB_HCA: rocep1s0f0,roceP2p1s0f0    # both halves for full 200 Gb/s
+    NCCL_IB_DISABLE: 0
+    NCCL_IGNORE_CPU_AFFINITY: 1
+    TORCH_DISTRIBUTED_DEBUG: INFO
+    NCCL_DEBUG: INFO
+    HF_XET_HIGH_PERFORMANCE: 1
+    VLLM_USE_AOT_COMPILE: "1"
+    #VLLM_FORCE_AOT_LOAD: "1"
+    VLLM_CACHE_ROOT: "/cache/vllm"
+    TRITON_CACHE_DIR: "/cache/triton"
+    TORCHINDUCTOR_CACHE_DIR: "/cache/inductor"
+    VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR: "/cache/flashinfer"
+  modelStorage:
+    storageClass: ""
+    mountPath: /root/.cache/huggingface
+    # -- Host path for Hugging Face model cache.
+    # Shares the host's ~/.cache/huggingface so models are downloaded once.
+    hostPath: /home/trevor/.cache/huggingface
+    readOnly: false
+  cacheStorage:
+    mountPath: /cache
+    # -- Host path for vLLM AOT compilation and Triton/Inductor caches.
+    # Shares the host's ~/.cache/vllm so compiled artifacts persist across restarts.
+    hostPath: /home/trevor/.cache/vllm_k8s
+    readOnly: false
+
+# =============================================================================
+# Models
+# =============================================================================
+models:
+  - name: gemma-4-26b-a4b-it
+    enabled: true
+    image:
+      repository: localhost:32000/vllm
+      tag: instanttensors
+    port: 8000
+    model: google/gemma-4-26B-A4B-it
+    nodes: 1
+    tensorParallelSize: 1
+    pipelineParallelSize: 1
+    maxModelLen: 262144
+    gpuMemoryUtilization: 0.5
+    resources:
+      limits:
+        cpu: "4"
+        memory: "30Gi"
+        nvidia.com/gpu: 1
+      requests:
+        cpu: "2"
+        memory: "28Gi"
+        nvidia.com/gpu: 1
+    affinity: {}
+    tolerations: []
+    extraEnv: {}
+    extraArgs:
+      - "--max-num-seqs=4"
+      - "--max-num-batched-tokens=8192"
+      - "--enable-auto-tool-choice"
+      - "--tool-call-parser=gemma4"
+      - "--reasoning-parser=gemma4"
+      - "--kv-cache-dtype=fp8"
+      - "--default-chat-template-kwargs={\"enable_thinking\": true}"
+      - "--load-format=instanttensor"
+    # -- KEDA autoscaling — scale-from-zero based on vLLM request queue depth
+    autoscaling:
+      enabled: true
+      keda: true
+      pollingInterval: 5
+      cooldownPeriod: 300
+      minReplicas: 0
+      maxReplicas: 1
+      targetRequestsWaiting: "5"
+
+  # ===========================================================================
+  # DeepSeek-V4-Flash-DSpark — Multi-node with MLA + Speculative Decoding
+  # ===========================================================================
+  # Summary: DeepSeek-V4-Flash-DSpark with fp8 KV cache, FlashInfer MLA sparse
+  # attention backend, DSPark speculative decoding (5 tokens), and DeepSeek V4
+  # tokenizer/reasoning/tool-calling support. Multi-node TP=2 across 2 nodes.
+  # ===========================================================================
+  - name: deepseek-v4-flash-dspark
+    enabled: true
+    image:
+      repository: localhost:32000/vllm-spark
+      tag: deepseek-v4-flash-dspark
+    port: 8000
+    model: deepseek-ai/DeepSeek-V4-Flash-DSpark
+    nodes: 2
+    tensorParallelSize: 2
+    pipelineParallelSize: 1
+    maxModelLen: 262144 # 131072
+    gpuMemoryUtilization: 0.8
+    resources:
+      limits:
+        cpu: "4"
+        memory: "30Gi"
+        nvidia.com/gpu: 2
+        rdma/rdma_shared_device_a: "2"
+      requests:
+        cpu: "2"
+        memory: "28Gi"
+        nvidia.com/gpu: 2
+        rdma/rdma_shared_device_a: "2"
+    extraEnv:
+      DG_JIT_USE_NVRTC: "0"
+      VLLM_USE_BREAKABLE_CUDAGRAPH: "0"
+      VLLM_USE_FLASHINFER_SAMPLER: "1"
+      VLLM_HOST_IP:
+        valueFrom:
+          fieldRef:
+            fieldPath: status.podIP
+    extraArgs:
+      - "--kv-cache-dtype=fp8"
+      - "--block-size=256"
+      - "--max-num-seqs=2"
+      - "--max-num-batched-tokens=8192"
+      - "--async-scheduling"
+      - "--enable-flashinfer-autotune"
+      - "--attention-backend=FLASHINFER_MLA_SPARSE_DSV4"
+      - '--compilation-config={"cudagraph_mode":"FULL_AND_PIECEWISE","custom_ops":["all"]}'
+      - "--max-cudagraph-capture-size=2"
+      - '--speculative-config={"method":"dspark","num_speculative_tokens":5,"draft_sample_method":"probabilistic","rejection_sample_method":"block"}'
+      - '--override-generation-config={"temperature":0.4}'
+      - "--tokenizer-mode=deepseek_v4"
+      - "--tool-call-parser=deepseek_v4"
+      - "--enable-auto-tool-choice"
+      - "--reasoning-parser=deepseek_v4"
+      - '--reasoning-config={"reasoning_parser":"deepseek_v4","reasoning_start_str":"","reasoning_end_str":""}'
+      - "--default-chat-template-kwargs.thinking=true"
+      - "--load-format=instanttensor"
+      - "--default-chat-template-kwargs.reasoning_effort=high"
+    # -- KEDA autoscaling — scale-from-zero based on vLLM request queue depth
+    autoscaling:
+      enabled: true
+      keda: true
+      pollingInterval: 5
+      cooldownPeriod: 300
+      minReplicas: 0
+      maxReplicas: 1
+      targetRequestsWaiting: "5"
+
+  # ===========================================================================
+  # Qwen3.6-35B-A3B — Single-node, MoE, with prefix caching + chunked prefill
+  # ===========================================================================
+  - name: qwen36-35b-a3b
+    enabled: true
+    image:
+      repository: vllm/vllm-openai
+      tag: v0.23.0
+    port: 8090
+    model: Qwen/Qwen3.6-35B-A3B
+    nodes: 1
+    tensorParallelSize: 1
+    pipelineParallelSize: 1
+    maxModelLen: 131072
+    gpuMemoryUtilization: 0.75
+    resources:
+      limits:
+        cpu: "4"
+        memory: "30Gi"
+        nvidia.com/gpu: 1
+      requests:
+        cpu: "2"
+        memory: "28Gi"
+        nvidia.com/gpu: 1
+    affinity: {}
+    tolerations: []
+    extraArgs:
+      - "--kv-cache-dtype=fp8"
+      - "--enable-auto-tool-choice"
+      - "--enable-prefix-caching"
+      - "--enable-chunked-prefill"
+      - "--tool-call-parser=qwen3_coder"
+      - "--reasoning-parser=qwen3"
+      - "--max-num-batched-tokens=16384"
+      - "--max-num-seqs=4"
+    # -- KEDA autoscaling — scale-from-zero based on vLLM request queue depth
+    autoscaling:
+      enabled: true
+      keda: true
+      pollingInterval: 5
+      cooldownPeriod: 300
+      minReplicas: 0
+      maxReplicas: 1
+      targetRequestsWaiting: "5"
+
+  # ===========================================================================
+  # Qwen3.6-27B — Single-node, dense, with prefix caching + chunked prefill
+  # ===========================================================================
+  - name: qwen36-27b
+    enabled: true
+    image:
+      repository: vllm/vllm-openai
+      tag: v0.23.0
+    port: 8090
+    model: Qwen/Qwen3.6-27B
+    nodes: 1
+    tensorParallelSize: 1
+    pipelineParallelSize: 1
+    maxModelLen: 131072
+    gpuMemoryUtilization: 0.75
+    resources:
+      limits:
+        cpu: "4"
+        memory: "30Gi"
+        nvidia.com/gpu: 1
+      requests:
+        cpu: "2"
+        memory: "28Gi"
+        nvidia.com/gpu: 1
+    affinity: {}
+    tolerations: []
+    extraArgs:
+      - "--kv-cache-dtype=fp8"
+      - "--enable-auto-tool-choice"
+      - "--enable-prefix-caching"
+      - "--enable-chunked-prefill"
+      - "--tool-call-parser=qwen3_coder"
+      - "--reasoning-parser=qwen3"
+      - "--max-num-batched-tokens=16384"
+      - "--load-format=fastsafetensors"
+      - "--max-num-seqs=4"
+    # -- KEDA autoscaling — scale-from-zero based on vLLM request queue depth
+    autoscaling:
+      enabled: true
+      keda: true
+      pollingInterval: 5
+      cooldownPeriod: 300
+      minReplicas: 0
+      maxReplicas: 1
+      targetRequestsWaiting: "5"
+
+nvno:
+  rdmaSharedDevicePlugin:
+    enabled: true
+    config: |
+      {
+        "configList": [
+          {
+            "resourceName": "rdma_shared_device_a",
+            "rdmaHcaMax": 63,
+            "selectors": {
+              "vendors": [],
+              "deviceIDs": [],
+              "drivers": [],
+              "ifNames": ["enp1s0f0np0", "enP2p1s0f0np0"],
+              "linkTypes": []
+            }
+          }
+        ]
+      }
+
+# ============================================================================
+# Gateway — Istio Gateway resource for external ingress
+# ============================================================================
+gateway:
+  # -- Name of the Gateway resource
+  name: ""
+  # -- Gateway class name (e.g. "istio")
+  gatewayClassName: "istio"
+  # -- Whether to create a Gateway resource
+  enabled: true

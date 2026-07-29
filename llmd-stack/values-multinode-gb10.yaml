@@ -109,5 +109,3 @@ nvno:
         ]
       }
 
-servicemonitor:
-  enabled: true

@@ -153,7 +153,7 @@ spec:
         - port: 5432
 {{- end }}
 
-{{- if or (hasKey .Values "keda") (hasKey .Values.vllm "autoscaling") }}
+{{- if or (hasKey .Values "keda") (hasKey .Values.global "autoscaling") }}
 {{- $kedaEnabled := false }}
 {{- range $model := .Values.models }}
 {{- if and $model.enabled $model.autoscaling $model.autoscaling.enabled $model.autoscaling.keda }}

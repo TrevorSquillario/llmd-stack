@@ -69,8 +69,13 @@ metadata:
     vllm/tensor-parallel-size: {{ $model.tensorParallelSize | quote }}
     vllm/multi-node: "true"
 spec:
-  replicas: {{ $model.replicas | default 1 }}
-
+  {{- if and $model.autoscaling.enabled $model.autoscaling.keda }}
+  # KEDA ScaledObject owns .spec.replicas — omit to avoid field manager conflict
+  {{- else if $model.autoscaling.enabled }}
+  replicas: {{ $model.autoscaling.minReplicas }}
+  {{- else }}
+  replicas: {{ $model.replicas }}
+  {{- end }}
   leaderWorkerTemplate:
     size: {{ $model.nodes }}
     restartPolicy: RecreateGroupOnPodRestart
@@ -116,7 +121,7 @@ spec:
         tolerations:
           {{- toYaml . | nindent 10 }}
         {{- end }}
-        terminationGracePeriodSeconds: 60
+        terminationGracePeriodSeconds: 30
         hostIPC: true
         subdomain: {{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}
         volumes:
@@ -125,6 +130,7 @@ spec:
               medium: Memory
               sizeLimit: {{ $model.dshmSizeLimit | default "32Gi" | quote }}
           {{- include "llmd-stack.modelStorage.volume" $ | nindent 10 }}
+          {{- include "llmd-stack.cacheStorage.volume" $ | nindent 10 }}
         containers:
           - name: vllm
             image: "{{ include "llmd-stack.model.image" (dict "model" $model "ctx" $) }}"
@@ -191,6 +197,7 @@ spec:
               - name: dshm
                 mountPath: /dev/shm
               {{- include "llmd-stack.modelStorage.volumeMount" $ | nindent 14 }}
+              {{- include "llmd-stack.cacheStorage.volumeMount" $ | nindent 14 }}
             resources:
               {{- toYaml $model.resources | nindent 14 }}
             livenessProbe:
@@ -254,7 +261,7 @@ spec:
         tolerations:
           {{- toYaml . | nindent 10 }}
         {{- end }}
-        terminationGracePeriodSeconds: 60
+        terminationGracePeriodSeconds: 30
         hostIPC: true
         subdomain: {{ include "llmd-stack.modelResourceName" (dict "name" $model.name "ctx" $) }}
         volumes:
@@ -263,6 +270,7 @@ spec:
               medium: Memory
               sizeLimit: {{ $model.dshmSizeLimit | default "32Gi" | quote }}
           {{- include "llmd-stack.modelStorage.volume" $ | nindent 10 }}
+          {{- include "llmd-stack.cacheStorage.volume" $ | nindent 10 }}
         containers:
           - name: vllm
             image: "{{ include "llmd-stack.model.image" (dict "model" $model "ctx" $) }}"
@@ -330,6 +338,7 @@ spec:
               - name: dshm
                 mountPath: /dev/shm
               {{- include "llmd-stack.modelStorage.volumeMount" $ | nindent 14 }}
+              {{- include "llmd-stack.cacheStorage.volumeMount" $ | nindent 14 }}
             resources:
               {{- toYaml $model.resources | nindent 14 }}
             # Workers do not serve the API, so no HTTP probes.
@@ -371,7 +380,8 @@ spec:
         target:
           type: AverageValue
           averageValue: {{ $model.autoscaling.targetRequestsWaiting | default "5" | quote }}
-  {{- with $model.autoscaling.behavior }}
+  {{- $behavior := $model.autoscaling.behavior | default $.Values.global.autoscaling.defaultBehavior }}
+  {{- with $behavior }}
   behavior:
     {{- toYaml . | nindent 4 }}
   {{- end }}

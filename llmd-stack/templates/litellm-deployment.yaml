@@ -52,6 +52,7 @@ spec:
             - "{{ .Values.litellm.service.port }}"
             - "--num_workers"
             - "4"
+            - "--use_v2_migration_resolver"
           securityContext:
             runAsNonRoot: true
             runAsUser: 101
@@ -151,7 +152,7 @@ spec:
           labelSelector:
             matchLabels:
               {{- include "llmd-stack.litellm.labels" . | nindent 14 }}
-      terminationGracePeriodSeconds: 120
+      terminationGracePeriodSeconds: 30
       volumes:
         - name: config
           configMap:

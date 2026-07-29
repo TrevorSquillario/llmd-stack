@@ -13,6 +13,29 @@ global:
   imagePullPolicy: IfNotPresent
   labels:
     app.kubernetes.io/part-of: llmd-stack
+  autoscaling:
+    # -- Prometheus server address for KEDA Prometheus scaler.
+    # Used when autoscaling.keda=true on individual models.
+    prometheusServerAddress: "http://dev-kube-prometheus-stack-prometheus.llmd-stack.svc:9090"
+    # -- Default HPA behavior shared by all models.
+    # Individual models can override by setting model.autoscaling.behavior.
+    defaultBehavior:
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 1
+          - type: Percent
+            value: 100
+            periodSeconds: 1
+        selectPolicy: Min
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Percent
+            value: 50
+            periodSeconds: 30
 
 # =============================================================================
 # vLLM Backend Settings
@@ -29,10 +52,6 @@ vllm:
     # -- Host path for Hugging Face model cache.
     # Shares the host's ~/.cache/huggingface so models are downloaded once.
     hostPath: /home/trevor/.cache/huggingface
-  autoscaling:
-    # -- Prometheus server address for KEDA Prometheus scaler.
-    # Used when autoscaling.keda=true on individual models.
-    prometheusServerAddress: "http://dev-kube-prometheus-stack-prometheus.llmd-stack.svc:9090"
 
 # =============================================================================
 # Models — Tiny model for HPA load testing
@@ -67,28 +86,14 @@ models:
     autoscaling:
       enabled: true
       keda: true # KEDA is preferred over Prometheus Adapter as it is being deprecated in favor of KEDA. With enabled: true and keda: false, you can still use Prometheus Adapter for autoscaling instead of KEDA.
+      pollingInterval: 5
+      cooldownPeriod: 300
       minReplicas: 0
       maxReplicas: 8
       # Scale out when average queue depth exceeds 5 pending requests
       # PromQL: sum(vllm:num_requests_waiting{model_name="{{ $model.model }}"})
       targetRequestsWaiting: "5"
-      behavior:
-        scaleUp:
-          stabilizationWindowSeconds: 30  # Waits 30s to ensure metric spike isn't a temporary blip
-          policies:
-            - type: Pods
-              value: 1                    # Add at most 1 pod at a time
-              periodSeconds: 30           # Every 30 seconds
-            - type: Percent
-              value: 100
-              periodSeconds: 15
-          selectPolicy: Min               # Pick the strictly smaller change to slow down scaling
-        scaleDown:
-          stabilizationWindowSeconds: 300 # Wait 5 mins before scaling down to prevent flapping
-          policies:
-            - type: Percent
-              value: 50
-              periodSeconds: 30      
+      # behavior: inherited from global.autoscaling.defaultBehavior
 
   - name: gemma-4-26b-a4b-it
     port: 8000
@@ -126,28 +131,12 @@ models:
     autoscaling:
       enabled: true
       keda: true # KEDA is preferred over Prometheus Adapter as it is being deprecated in favor of KEDA. With enabled: true and keda: false, you can still use Prometheus Adapter for autoscaling instead of KEDA.
+      pollingInterval: 5
+      cooldownPeriod: 300
       minReplicas: 0
       maxReplicas: 8
       # Scale out when average queue depth exceeds 5 pending requests
       # PromQL: sum(vllm:num_requests_waiting{model_name="{{ $model.model }}"})
       targetRequestsWaiting: "5"
-      behavior:
-        scaleUp:
-          stabilizationWindowSeconds: 30  # Waits 30s to ensure metric spike isn't a temporary blip
-          policies:
-            - type: Pods
-              value: 1                    # Add at most 1 pod at a time
-              periodSeconds: 30           # Every 30 seconds
-            - type: Percent
-              value: 100
-              periodSeconds: 15
-          selectPolicy: Min               # Pick the strictly smaller change to slow down scaling
-        scaleDown:
-          stabilizationWindowSeconds: 300 # Wait 5 mins before scaling down to prevent flapping
-          policies:
-            - type: Percent
-              value: 50
-              periodSeconds: 30   
+      # behavior: inherited from global.autoscaling.defaultBehavior
 
-servicemonitor:
-  enabled: true

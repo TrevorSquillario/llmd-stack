@@ -7,6 +7,11 @@ kube-prometheus-stack:
     prometheusSpec:
       serviceMonitorSelectorNilUsesHelmValues: false 
       podMonitorSelectorNilUsesHelmValues: false
+      # -- Reduce global scrape interval so new targets are picked up
+      # faster by KEDA autoscaling. Default is 1m (Prometheus built-in).
+      scrapeInterval: 15s
+      # -- Rule evaluation interval; should match or be close to scrapeInterval.
+      evaluationInterval: 15s
 
   grafana:
     enabled: true

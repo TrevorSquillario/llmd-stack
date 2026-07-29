@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4]
+
+### Added
+- **Global autoscaling defaults**: Moved `autoscaling.prometheusServerAddress` and added `autoscaling.defaultBehavior` under `global.*`. Individual models can now inherit or override scaling behavior. All autoscale values files updated to remove per-model `behavior` blocks in favor of the global default.
+- **KEDA keep-alive trigger**: ScaledObject now includes a second Prometheus trigger querying `vllm:num_requests_running` with threshold `"1"`. Prevents the cooldown timer from starting while a request is in flight — the EPP queue depth drops to 0 as soon as a pod starts serving, but the running-requests trigger keeps the pod alive until the request completes.
+- **`global.defaultRequestTTL`**: New config option driving EPP Flow Control queue TTL, LiteLLM global `request_timeout`, and per-model `timeout`. Set to 1800s in the homelab config for cold-start scenarios.
+- **Cache storage volume**: New `vllm.cacheStorage` section with `hostPath`, `mountPath`, and `readOnly` options. Mounts a hostPath volume for AOT compilation artifacts (Triton, Inductor, FlashInfer). Rendered via new `llmd-stack.cacheStorage.volume` and `llmd-stack.cacheStorage.volumeMount` helpers.
+- **Model storage `readOnly`**: New `vllm.modelStorage.readOnly` option for mounting the HF cache volume as read-only.
+- **EPP Flow Control separate ConfigMap**: New `epp-flow-control-configmap.yaml` template renders the flow control plugins config as a standalone ConfigMap so Helm template expressions (e.g. `global.defaultRequestTTL`) are expanded. The sub-chart now references it via `pluginsConfigFile: ../config-custom/flow-control-plugins.yaml` with a separate volume mount at `/config-custom`.
+- **ServiceMonitor scrape interval**: New `servicemonitor.scrapeInterval` config field (default: `10s`), applied to LiteLLM, vLLM, and EPP ServiceMonitors.
+- **LiteLLM `--use_v2_migration_resolver`**: Added to the LiteLLM startup command.
+- **LiteLLM per-model `max_input_tokens`**: New field rendered from `model.maxModelLen` in the LiteLLM config.
+- **Prometheus global scrape config**: Added `scrapeInterval: 15s` and `evaluationInterval: 15s` to `prom-g/values.yaml` for faster KEDA target discovery.
+- **`startup_timer.py`**: New utility script for measuring time-to-first-response from an OpenAI-compatible endpoint.
+- **`values-multinode-gb10-homelab.yaml`**: New full homelab deployment config targeting a 2-node GB10 cluster with RDMA, Istio gateway, and four models (Gemma 4 26B A4B IT, DeepSeek-V4-Flash-DSpark, Qwen3.6-35B-A3B, Qwen3.6-27B).
+
+### Changed
+- **Replicas logic (single & multi-node)**: When `autoscaling.keda=true`, `.spec.replicas` is omitted from Deployment/LeaderWorkerSet to avoid field manager conflict with KEDA ScaledObject. When `autoscaling.enabled` is true (but not KEDA), replicas come from `autoscaling.minReplicas`.
+- **Termination grace period**: vLLM single-node reduced from 300s to 30s; vLLM multi-node reduced from 60s to 30s; LiteLLM reduced from 120s to 30s.
+- **`servicemonitor.enabled` default**: Changed from `false` to `true` in `values.yaml`.
+- **`servicemonitor.enabled: true` removed**: From all environment-specific values files (`values-single.yaml`, `values-single-istio.yaml`, `values-single-pvc.yaml`, etc.) since it now defaults to `true`.
+- **EPP flow control config path**: Changed from inline `pluginsCustomConfig` to a separate ConfigMap mounted at `/config-custom`, referenced via `../config-custom/flow-control-plugins.yaml`.
+- **`values-single-istio-autoscale.yaml`**: Scale-up `stabilizationWindowSeconds` reduced from 30 to 0, `periodSeconds` reduced from 30 to 1 for faster cold-start scale-out.
+- **README.md**: Added `kubectl events` example, startup timer instructions with benchmark results, and general documentation improvements.
+- **`.gitignore`**: Removed `values-local*` entry.
+
 ## [1.0.3]
 
 ### Added

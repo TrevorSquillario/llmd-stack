@@ -139,6 +139,36 @@ Render the model-storage volume mount.
 {{- define "llmd-stack.modelStorage.volumeMount" -}}
 - name: model-storage
   mountPath: {{ $.Values.vllm.modelStorage.mountPath }}
+  {{- if $.Values.vllm.modelStorage.readOnly }}
+  readOnly: true
+  {{- end }}
+{{- end }}
+
+{{- /*
+Render the cache-storage volume definition.
+Only added when .Values.vllm.cacheStorage.hostPath is set.
+*/}}
+{{- define "llmd-stack.cacheStorage.volume" -}}
+{{- if $.Values.vllm.cacheStorage.hostPath }}
+- name: cache-storage
+  hostPath:
+    path: {{ $.Values.vllm.cacheStorage.hostPath }}
+    type: DirectoryOrCreate
+{{- end }}
+{{- end }}
+
+{{- /*
+Render the cache-storage volume mount.
+Only added when .Values.vllm.cacheStorage.hostPath is set.
+*/}}
+{{- define "llmd-stack.cacheStorage.volumeMount" -}}
+{{- if $.Values.vllm.cacheStorage.hostPath }}
+- name: cache-storage
+  mountPath: {{ $.Values.vllm.cacheStorage.mountPath }}
+  {{- if $.Values.vllm.cacheStorage.readOnly }}
+  readOnly: true
+  {{- end }}
+{{- end }}
 {{- end }}
 
 {{- /*

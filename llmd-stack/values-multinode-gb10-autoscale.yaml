@@ -46,10 +46,6 @@ vllm:
     # or the Docker root:
     #   /root/.cache/huggingface
     hostPath: /home/trevor/.cache/huggingface
-  autoscaling:
-    # -- Prometheus server address for KEDA Prometheus scaler.
-    # Used when autoscaling.keda=true on individual models.
-    prometheusServerAddress: "http://dev-kube-prometheus-stack-prometheus.llmd-stack.svc:9090"
 
 # =============================================================================
 # Models — Multi-node with RDMA and autoscaling
@@ -93,28 +89,14 @@ models:
       enabled: true
        # KEDA is preferred over Prometheus Adapter as it is being deprecated in favor of KEDA. With enabled: true and keda: false, you can still use Prometheus Adapter for autoscaling instead of KEDA.
       keda: true
+      pollingInterval: 5
+      cooldownPeriod: 300
       # Scale-to-zero enabled with minReplicas: 0; KEDA ScaledObject managed; Expect long cold start times and a delayed first request. 
       # Set it to 1 to keep a hot instance running (comsumes VRAM and power)
       minReplicas: 0
       maxReplicas: 2 # 2 lws per node, 4 vllm instances
       targetRequestsWaiting: "5"
-      behavior:
-        scaleUp:
-          stabilizationWindowSeconds: 30  # Waits 30s to ensure metric spike isn't a temporary blip
-          policies:
-            - type: Pods
-              value: 1                    # Add at most 1 pod at a time
-              periodSeconds: 30           # Every 30 seconds
-            - type: Percent
-              value: 100
-              periodSeconds: 15
-          selectPolicy: Min               # Pick the strictly smaller change to slow down scaling
-        scaleDown:
-          stabilizationWindowSeconds: 300 # Wait 5 mins before scaling down to prevent flapping
-          policies:
-            - type: Percent
-              value: 50
-              periodSeconds: 30 
+      # behavior: inherited from global.autoscaling.defaultBehavior
 
 # =============================================================================
 # NVIDIA Network Operator (NVNO) — RDMA Shared Device Plugin
@@ -139,5 +121,3 @@ nvno:
         ]
       }
 
-servicemonitor:
-  enabled: true

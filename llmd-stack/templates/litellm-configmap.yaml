@@ -36,7 +36,7 @@ data:
     litellm_settings:
       drop_params: "{{ .Values.litellm.drop_params }}"
       set_verbose: false
-      request_timeout: 600
+      request_timeout: {{ .Values.global.defaultRequestTTL }}
       num_retries: {{ .Values.litellm.routerSettings.num_retries }}
       retry_after: 5
       fallback: []
@@ -72,12 +72,13 @@ data:
           rpm: 1000
           tpm: 100000
           max_retries: 0
-          timeout: 600
+          timeout: {{ $.Values.global.defaultRequestTTL }}
         model_info:
           mode: chat
           supports_function_calling: true
           supports_vision: false
           supports_tool_choice: true
+          max_input_tokens: {{ $model.maxModelLen }}
       {{- end }}
       {{- end }}
 {{- end }}
